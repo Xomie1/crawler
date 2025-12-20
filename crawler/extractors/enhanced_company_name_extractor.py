@@ -1,6 +1,6 @@
 """
-Company Name Extractor v8 - PRIVACY & ABOUT PAGE PRIORITY
-Focuses on privacy/about pages for formal legal declarations first
+Company Name Extractor v9 - FIXED TABLE EXTRACTION PRIORITY
+Prioritizes company info tables, fixes early stopping bug
 """
 
 import re
@@ -34,7 +34,7 @@ class CompanyNameCandidate:
 
 
 class EnhancedCompanyNameExtractor:
-    """Extract company names with privacy/about page priority."""
+    """Extract company names with info page table priority."""
     
     LEGAL_ENTITIES = [
         '株式会社', '有限会社', '合同会社', '合資会社', '合名会社',
@@ -52,10 +52,10 @@ class EnhancedCompanyNameExtractor:
     )
     
     FORMAL_DECLARATION_PATTERNS = [
-        r'(株式会社\s+[ぁ-ん ァ-ヴー\u4e00-\u9fff0-9・\-\s]{2,40}?)[は|が|を]',
-        r'(有限会社\s+[ぁ-ん ァ-ヴー\u4e00-\u9fff0-9・\-\s]{2,40}?)[は|が|を]',
-        r'(合同会社\s+[ぁ-ん ァ-ヴー\u4e00-\u9fff0-9・\-\s]{2,40}?)[は|が|を]',
-        r'(株式会社\s+[ぁ-ん ァ-ヴー\u4e00-\u9fff0-9・\-\s]{2,40}?)(?:の|です|ます|以下)',
+        r'(株式会社\s+[ぁ-ん ァ-ヴー\u4e00-\u9fff0-9・\-\s]{2,60}?)(?=は|が|を|。|、|\n)',
+        r'(有限会社\s+[ぁ-ん ァ-ヴー\u4e00-\u9fff0-9・\-\s]{2,60}?)(?=は|が|を|。|、|\n)',
+        r'(合同会社\s+[ぁ-ん ァ-ヴー\u4e00-\u9fff0-9・\-\s]{2,60}?)(?=は|が|を|。|、|\n)',
+        r'会社名\s*[:：]\s*(株式会社\s+[ぁ-ん ァ-ヴー\u4e00-\u9fff0-9・\-\s]+?)(?:\n|。|、)',
     ]
     
     LABELED_FIELD_PATTERNS = [
@@ -74,6 +74,8 @@ class EnhancedCompanyNameExtractor:
     
     GARBAGE_SUFFIXES = [
         'からの独立', 'の要項', 'の事業', 'のアクセス', 'の会社', 'を含む', 'グループ会社',
+        '代表', '社長', '住所', '屋号', '事業内容', 'についての', '経営陣', '最終改定',
+        'の提供', 'に直接', 'の定める', 'に同意', 'について', 'の情報', '入社'
     ]
     
     def __init__(self, base_url: str, fetcher=None):
@@ -81,7 +83,7 @@ class EnhancedCompanyNameExtractor:
         self.fetcher = fetcher
     
     def extract(self, html_content: str, final_url: Optional[str] = None) -> Dict:
-        """Extract company name with privacy/about page priority."""
+        """Extract company name with info page table priority."""
         url = final_url or self.base_url
         candidates: List[CompanyNameCandidate] = []
         
@@ -97,14 +99,19 @@ class EnhancedCompanyNameExtractor:
                 print(f"  Found: {c.value} (conf: {c.confidence:.2f})")
             candidates.extend(homepage_candidates)
         
-        # Phase 2: Privacy & About pages (HIGHEST PRIORITY)
+        # Phase 2: Company info pages FIRST (highest priority for tables)
         if self.fetcher:
-            print("\nPHASE 2: Privacy & About pages")
+            print("\nPHASE 2: Company info pages (TABLE PRIORITY)")
+            info_candidates = self._fetch_info_pages(html_content, url)
+            candidates.extend(info_candidates)
+            
+            # Phase 3: Privacy & About pages
+            print("\nPHASE 3: Privacy & About pages")
             privacy_candidates = self._fetch_pages(html_content, url, self.PRIVACY_PAGE_PATTERNS + self.ABOUT_PAGE_PATTERNS, 'privacy_about')
             candidates.extend(privacy_candidates)
             
-            # Phase 3: Other company pages
-            print("\nPHASE 3: Other company pages")
+            # Phase 4: Other company pages
+            print("\nPHASE 4: Other company pages")
             company_candidates = self._fetch_pages(html_content, url, self.COMMON_PATTERNS, 'company')
             candidates.extend(company_candidates)
         
@@ -132,6 +139,65 @@ class EnhancedCompanyNameExtractor:
         
         return results
     
+    def _fetch_info_pages(self, html_content: str, base_url: str) -> List[CompanyNameCandidate]:
+        """Fetch company info pages first - they have the best table data."""
+        results = []
+        if not self.fetcher:
+            return results
+        
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            info_urls = set()
+            
+            # Find info/outline/company profile pages
+            for link in soup.find_all('a', href=True):
+                href = link.get('href', '').lower()
+                link_text = link.get_text().lower()
+                
+                # Prioritize pages that typically have company tables
+                if any(x in href for x in ['info.html', 'outline', 'profile', 'gaiyou', 'summary']):
+                    info_urls.add(urljoin(base_url, link['href']))
+                elif any(kw in link_text for kw in ['会社概要', '会社情報', '企業情報', 'company info']):
+                    if 'contact' not in href and 'form' not in href:
+                        info_urls.add(urljoin(base_url, link['href']))
+            
+            # Add common info URLs
+            base_norm = base_url.rstrip('/')
+            info_urls.add(base_norm + '/company/info.html')
+            info_urls.add(base_norm + '/company/outline.html')
+            info_urls.add(base_norm + '/company/profile.html')
+            info_urls.add(base_norm + '/company/gaiyou.html')
+            
+            print(f"  Found {len(info_urls)} info page URLs")
+            
+            # Sort to prioritize info.html
+            sorted_urls = sorted(info_urls, key=lambda x: (
+                0 if 'info.html' in x else
+                1 if 'outline' in x or 'gaiyou' in x else
+                2 if 'profile' in x else
+                3
+            ))
+            
+            for url in sorted_urls[:10]:
+                try:
+                    content, status, _, _ = self.fetcher.fetch_page(url)
+                    if status == 200 and content:
+                        print(f"    Fetching: {url}")
+                        page_results = self._extract_from_page(content, url, 'company_info')
+                        results.extend(page_results)
+                        
+                        # Stop if we found a high-quality table match
+                        table_matches = [r for r in page_results if r.method == 'table_field' and r.confidence >= 0.99]
+                        if table_matches:
+                            print(f"    [✓ Found high-quality table match - stopping info page search]")
+                            break
+                except Exception as e:
+                    logger.debug(f"Fetch error {url}: {e}")
+        except Exception as e:
+            logger.error(f"Info page fetch error: {e}")
+        
+        return results
+    
     def _fetch_pages(self, html_content: str, base_url: str, patterns: List[str], source_type: str) -> List[CompanyNameCandidate]:
         """Fetch and extract from pages matching patterns."""
         results = []
@@ -142,7 +208,6 @@ class EnhancedCompanyNameExtractor:
             soup = BeautifulSoup(html_content, 'html.parser')
             links = set()
             
-            # Find matching links - be aggressive about finding company/about/privacy pages
             for link in soup.find_all('a', href=True):
                 href = link.get('href', '').lower()
                 link_text = link.get_text().lower()
@@ -151,22 +216,19 @@ class EnhancedCompanyNameExtractor:
                     if pattern in href:
                         links.add(urljoin(base_url, link['href']))
                         break
-                    # Also check text content for company/about keywords
                     if source_type == 'privacy_about' and any(kw in link_text for kw in ['会社', 'プライバシー', 'about', 'privacy']):
                         if 'contact' not in href and 'form' not in href:
                             links.add(urljoin(base_url, link['href']))
                             break
             
-            # Add common URLs
             base_norm = base_url.rstrip('/')
             for pattern in patterns:
                 links.add(base_norm + pattern)
             
             print(f"  Found {len(links)} links")
             
-            # Prioritize based on source type
             if source_type == 'privacy_about':
-                priority = ['privacy', 'aboutus', 'about', 'company/info', 'gaiyou', 'company']
+                priority = ['privacy', 'aboutus', 'about', 'company']
             else:
                 priority = ['company', 'corporate', 'profile', 'terms']
             
@@ -179,11 +241,6 @@ class EnhancedCompanyNameExtractor:
                         print(f"    Fetching: {url}")
                         page_results = self._extract_from_page(content, url, source_type)
                         results.extend(page_results)
-                        
-                        # Stop if found formal declaration or labeled field
-                        if any(r.method in ['formal_declaration', 'labeled_field'] for r in page_results):
-                            print(f"    [Found high-confidence match - stopping]")
-                            break
                 except Exception as e:
                     logger.debug(f"Fetch error {url}: {e}")
         except Exception as e:
@@ -204,10 +261,41 @@ class EnhancedCompanyNameExtractor:
             text = soup.get_text()
             page_type = self._get_page_type(page_url)
             
-            # Strategy 1: Formal declarations (highest confidence)
+            # Strategy 1: TABLE EXTRACTION (HIGHEST PRIORITY for info pages)
+            for table in soup.find_all('table'):
+                for row in table.find_all('tr'):
+                    cells = row.find_all(['td', 'th'])
+                    if len(cells) >= 2:
+                        label = cells[0].get_text().strip()
+                        value = cells[1].get_text().strip()
+                        
+                        # Check for company name labels
+                        if any(kw in label for kw in ['商号', '会社名', '法人名', '企業名', '正式名称', 'Company Name', 'Corporate Name']):
+                            cleaned = self._clean(value)
+                            
+                            # CRITICAL: Verify it contains a legal entity
+                            has_legal = any(e in cleaned for e in self.LEGAL_ENTITIES)
+                            
+                            if cleaned and has_legal and cleaned not in seen and self._is_valid(cleaned) and not self._is_garbage(cleaned):
+                                seen.add(cleaned)
+                                confidence = 0.99 if source_type == 'company_info' else 0.97
+                                results.append(CompanyNameCandidate(
+                                    cleaned, f'{source_type}_{page_type}', confidence, 'table_field', True
+                                ))
+                                print(f"      [TABLE] {cleaned}")
+            
+            # If we found table results on info pages, prioritize them
+            if results and source_type == 'company_info':
+                return results
+            
+            # Strategy 2: Formal declarations
             for pattern in self.FORMAL_DECLARATION_PATTERNS:
                 for match in re.finditer(pattern, text, re.MULTILINE):
-                    name = match.group(1).strip()
+                    name = match.group(1).strip() if match.lastindex >= 1 else match.group(0).strip()
+                    
+                    if len(name) > 50:
+                        name = re.split(r'\n|。|、|  |（', name)[0].strip()
+                    
                     cleaned = self._clean(name)
                     
                     if cleaned and cleaned not in seen and self._is_valid(cleaned) and not self._is_garbage(cleaned):
@@ -216,24 +304,6 @@ class EnhancedCompanyNameExtractor:
                             cleaned, f'{source_type}_{page_type}', 0.98, 'formal_declaration', 
                             any(e in cleaned for e in self.LEGAL_ENTITIES)
                         ))
-            
-            # Strategy 2: Labeled fields in tables
-            if not results:
-                for table in soup.find_all('table'):
-                    for row in table.find_all('tr'):
-                        cells = row.find_all(['td', 'th'])
-                        if len(cells) >= 2:
-                            label = cells[0].get_text().strip()
-                            value = cells[1].get_text().strip()
-                            
-                            if any(kw in label for kw in ['商号', '会社名', '法人名', '企業名', '正式名称']):
-                                cleaned = self._clean(value)
-                                if cleaned and cleaned not in seen and self._is_valid(cleaned) and not self._is_garbage(cleaned):
-                                    seen.add(cleaned)
-                                    results.append(CompanyNameCandidate(
-                                        cleaned, f'{source_type}_{page_type}', 0.97, 'labeled_field',
-                                        any(e in cleaned for e in self.LEGAL_ENTITIES)
-                                    ))
             
             # Strategy 3: Inline labeled fields
             if not results:
@@ -260,7 +330,7 @@ class EnhancedCompanyNameExtractor:
                     full = (entity + name_part).strip()
                     cleaned = self._clean(full)
                     
-                    if cleaned and cleaned not in seen and self._is_valid(cleaned) and not self._is_garbage(cleaned):
+                    if cleaned and 8 <= len(cleaned) <= 30 and cleaned not in seen and self._is_valid(cleaned) and not self._is_garbage(cleaned):
                         seen.add(cleaned)
                         results.append(CompanyNameCandidate(
                             cleaned, f'{source_type}_{page_type}', 0.94, 'regex', True
@@ -272,7 +342,7 @@ class EnhancedCompanyNameExtractor:
         return results
     
     def _select_best_candidate(self, candidates: List[CompanyNameCandidate]) -> Dict:
-        """Select best candidate with priority rules."""
+        """Select best candidate with table priority."""
         result = {
             'company_name': None,
             'company_name_source': None,
@@ -290,14 +360,18 @@ class EnhancedCompanyNameExtractor:
         print("SELECTING BEST CANDIDATE")
         print("="*80)
         
-        # Remove duplicates - keep highest confidence
+        # Remove duplicates
         seen = {}
         for c in candidates:
             if c.value not in seen or c.confidence > seen[c.value].confidence:
                 seen[c.value] = c
         
         unique = list(seen.values())
-        cleaned = [c for c in unique if not self._is_garbage(c.value)]
+        cleaned = [c for c in unique if not self._is_garbage(c.value) and 8 <= len(c.value) <= 40]
+        
+        if not cleaned:
+            cleaned = [c for c in unique if not self._is_garbage(c.value)]
+        
         legal_only = [c for c in cleaned if c.has_legal_entity]
         
         print(f"After dedup/filter: {len(legal_only)}/{len(unique)} candidates")
@@ -309,38 +383,33 @@ class EnhancedCompanyNameExtractor:
         for c in legal_only:
             print(f"  ✓ {c.value} ({c.confidence:.2f}) - {c.method} [{c.source}]")
         
-        # Priority 1: Formal declarations from privacy/about
-        formal_pa = [c for c in legal_only if c.method == 'formal_declaration' and 'privacy_about' in c.source]
-        if formal_pa:
-            best = sorted(formal_pa, key=lambda x: (-x.confidence, -len(x.value)))[0]
-            reason = "Formal declaration from privacy/about (HIGHEST)"
+        # Priority 1: Table fields from info pages (HIGHEST)
+        table_info = [c for c in legal_only if c.method == 'table_field' and 'company_info' in c.source]
+        if table_info:
+            best = sorted(table_info, key=lambda x: (-x.confidence, -len(x.value)))[0]
+            reason = "Table field from company info page (HIGHEST PRIORITY)"
         else:
-            # Priority 2: Labeled fields from privacy/about
-            labeled_pa = [c for c in legal_only if 'labeled_field' in c.method and 'privacy_about' in c.source]
-            if labeled_pa:
-                best = sorted(labeled_pa, key=lambda x: (-x.confidence, -len(x.value)))[0]
-                reason = "Labeled field from privacy/about (VERY HIGH)"
+            # Priority 2: Any table field
+            table_any = [c for c in legal_only if c.method == 'table_field']
+            if table_any:
+                best = sorted(table_any, key=lambda x: (-x.confidence, -len(x.value)))[0]
+                reason = "Table field (HIGH CONFIDENCE)"
             else:
-                # Priority 3: Labeled fields from any page
-                labeled_any = [c for c in legal_only if 'labeled_field' in c.method]
-                if labeled_any:
-                    best = sorted(labeled_any, key=lambda x: (-x.confidence, -len(x.value)))[0]
-                    reason = "Labeled field (HIGH)"
+                # Priority 3: Labeled fields
+                labeled = [c for c in legal_only if 'labeled_field' in c.method]
+                if labeled:
+                    best = sorted(labeled, key=lambda x: (-x.confidence, -len(x.value)))[0]
+                    reason = "Labeled field"
                 else:
-                    # Priority 4: Complete entities from privacy/about
-                    complete_pa = [c for c in legal_only if 'privacy_about' in c.source and 8 <= len(c.value) <= 40]
-                    if complete_pa:
-                        best = sorted(complete_pa, key=lambda x: (-x.confidence, -len(x.value)))[0]
-                        reason = "Complete entity from privacy/about"
+                    # Priority 4: Formal declarations
+                    formal = [c for c in legal_only if c.method == 'formal_declaration']
+                    if formal:
+                        best = sorted(formal, key=lambda x: (-x.confidence, -len(x.value)))[0]
+                        reason = "Formal declaration"
                     else:
-                        # Priority 5: Complete entities from other pages
-                        complete = [c for c in legal_only if 8 <= len(c.value) <= 40]
-                        if complete:
-                            best = sorted(complete, key=lambda x: (-x.confidence, -len(x.value)))[0]
-                            reason = "Complete entity from company page"
-                        else:
-                            best = sorted(legal_only, key=lambda x: (-x.confidence, -len(x.value)))[0]
-                            reason = "Legal entity (fallback)"
+                        # Priority 5: Fallback
+                        best = sorted(legal_only, key=lambda x: (-x.confidence, -len(x.value)))[0]
+                        reason = "Best match (fallback)"
         
         print(f"\n[FINAL] {best.value}")
         print(f"        Confidence: {best.confidence:.2f}")
@@ -360,13 +429,13 @@ class EnhancedCompanyNameExtractor:
             return ''
         text = unicodedata.normalize('NFKC', text)
         text = re.sub(r'[\n\r]+', ' ', text)
-        text = re.sub(r'\s+', ' ', text).strip()  # Normalize multiple spaces to single space
+        text = re.sub(r'\s+', ' ', text).strip()
         text = re.sub(r'^©\s*|&copy;\s*', '', text)
         return text.strip()
     
     def _is_valid(self, name: str) -> bool:
         """Check if name is valid format."""
-        if not name or len(name) < 3 or len(name) > 40:
+        if not name or len(name) < 3 or len(name) > 60:
             return False
         
         jp_chars = len(re.findall(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]', name))
@@ -397,9 +466,11 @@ class EnhancedCompanyNameExtractor:
         """Determine page type from URL."""
         url_lower = url.lower()
         
-        if any(x in url_lower for x in ['privacy']):
+        if any(x in url_lower for x in ['info', 'outline', 'gaiyou']):
+            return 'info'
+        elif any(x in url_lower for x in ['privacy']):
             return 'privacy'
-        elif any(x in url_lower for x in ['about', 'gaiyou', 'outline']):
+        elif any(x in url_lower for x in ['about']):
             return 'about'
         elif any(x in url_lower for x in ['company', 'corporate']):
             return 'company'
