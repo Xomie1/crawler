@@ -1,0 +1,37 @@
+# Core HTTP and HTML Processing
+requests
+beautifulsoup4
+lxml
+
+# Data Processing
+pandas
+openpyxl  # Excel support
+
+# Progress Tracking
+tqdm
+
+# Google Sheets Integration
+gspread
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+
+# Configuration
+python-dotenv
+
+requests
+beautifulsoup4
+lxml
+pandas
+openpyxl
+playwright
+dnspython
+chardet
+
+# AI Extraction Dependencies
+# Add these to your existing requirements.txt
+
+# OpenAI SDK (works for both OpenAI and Groq)
+openai
+
