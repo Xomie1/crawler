@@ -59,13 +59,12 @@ class EnhancedCompanyNameExtractor:
     ]
     
     LABELED_FIELD_PATTERNS = [
-        r'商号\s*[:：]\s*([^\n\r,。、]+)',
-        r'会社名\s*[:：]\s*([^\n\r,。、]+)',
-        r'法人名\s*[:：]\s*([^\n\r,。、]+)',
-        r'企業名\s*[:：]\s*([^\n\r,。、]+)',
-        r'正式名称\s*[:：]\s*([^\n\r,。、]+)',
-        r'Company Name\s*[:：]\s*([^\n\r,。、]+)',
-        r'Corporate Name\s*[:：]\s*([^\n\r,。、]+)',
+        # Match: label + colon + legal entity + optional name (2-25 chars total after entity)
+        r'商号\s*[:：]\s*((?:株式会社|有限会社|合同会社|合資会社|合名会社)[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ffA-Za-z0-9ー]{0,25}?)(?=相談所名|連絡先|代表者名|住所|所在地|電話|FAX|\s{2,}|$)',
+        r'会社名\s*[:：]\s*((?:株式会社|有限会社|合同会社|合資会社|合名会社)[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ffA-Za-z0-9ー]{0,25}?)(?=相談所名|連絡先|代表者名|住所|所在地|電話|FAX|\s{2,}|$)',
+        r'法人名\s*[:：]\s*((?:株式会社|有限会社|合同会社)[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ffA-Za-z0-9ー]{0,25}?)(?=相談所名|連絡先|代表者名|住所|所在地|電話|FAX|\s{2,}|$)',
+        r'企業名\s*[:：]\s*((?:株式会社|有限会社)[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ffA-Za-z0-9ー]{0,25}?)(?=相談所名|連絡先|代表者名|住所|所在地|電話|FAX|\s{2,}|$)',
+        r'正式名称\s*[:：]\s*((?:株式会社|有限会社)[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ffA-Za-z0-9ー]{0,25}?)(?=相談所名|連絡先|代表者名|住所|所在地|電話|FAX|\s{2,}|$)',
     ]
     
     PRIVACY_PAGE_PATTERNS = ['/privacy.html', '/privacy/', '/privacy-policy', '/privacy.php']
@@ -75,7 +74,16 @@ class EnhancedCompanyNameExtractor:
     GARBAGE_SUFFIXES = [
         'からの独立', 'の要項', 'の事業', 'のアクセス', 'の会社', 'を含む', 'グループ会社',
         '代表', '社長', '住所', '屋号', '事業内容', 'についての', '経営陣', '最終改定',
-        'の提供', 'に直接', 'の定める', 'に同意', 'について', 'の情報', '入社'
+        'の提供', 'に直接', 'の定める', 'に同意', 'について', 'の情報', '入社',
+        'のミッション', 'それ', 'これ', '所在地', 'の理念', 'の目標', 'の方針',
+        '協会', '協議会', '推進協会', '推進会', 'センター', '研究所', '財団', 'を運営'
+    ]
+    
+    # Patterns that indicate this is likely NOT the main company
+    ASSOCIATION_PATTERNS = [
+        '一般社団法人', '一般財団法人', '公益社団法人', '公益財団法人',
+        '協会', '協議会', '推進協会', '連盟', 'センター', '研究所',
+        '組合', '共同組合', '事業協同組合'
     ]
     
     def __init__(self, base_url: str, fetcher=None):
@@ -305,21 +313,29 @@ class EnhancedCompanyNameExtractor:
                             any(e in cleaned for e in self.LEGAL_ENTITIES)
                         ))
             
-            # Strategy 3: Inline labeled fields
-            if not results:
-                for pattern in self.LABELED_FIELD_PATTERNS:
-                    for match in re.finditer(pattern, text, re.MULTILINE):
-                        name = match.group(1).strip().split('\n')[0].split('。')[0].strip()
-                        cleaned = self._clean(name)
-                        
-                        if cleaned and cleaned not in seen and self._is_valid(cleaned) and not self._is_garbage(cleaned):
-                            seen.add(cleaned)
-                            results.append(CompanyNameCandidate(
-                                cleaned, f'{source_type}_{page_type}', 0.96, 'labeled_field',
-                                any(e in cleaned for e in self.LEGAL_ENTITIES)
-                            ))
+            # Strategy 3: Inline labeled fields (ALWAYS CHECK - don't skip!)
+            for pattern in self.LABELED_FIELD_PATTERNS:
+                for match in re.finditer(pattern, text, re.MULTILINE):
+                    name = match.group(1).strip().split('\n')[0].split('。')[0].strip()
+                    cleaned = self._clean(name)
+                    
+                    print(f"      [LABELED] Raw: '{name}' -> Cleaned: '{cleaned}'")
+                    
+                    if cleaned and cleaned not in seen and self._is_valid(cleaned) and not self._is_garbage(cleaned):
+                        seen.add(cleaned)
+                        results.append(CompanyNameCandidate(
+                            cleaned, f'{source_type}_{page_type}', 0.96, 'labeled_field',
+                            any(e in cleaned for e in self.LEGAL_ENTITIES)
+                        ))
+                    elif cleaned:
+                        if cleaned in seen:
+                            print(f"        -> Skipped (duplicate)")
+                        elif not self._is_valid(cleaned):
+                            print(f"        -> Skipped (invalid)")
+                        elif self._is_garbage(cleaned):
+                            print(f"        -> Skipped (garbage)")
             
-            # Strategy 4: Regex patterns (fallback)
+            # Strategy 4: Regex patterns (fallback - only if no better results)
             if not results:
                 for match in self.COMPANY_NAME_PATTERN.finditer(text):
                     entity, name_part = match.group(1), match.group(2) or ''
@@ -329,6 +345,8 @@ class EnhancedCompanyNameExtractor:
                     
                     full = (entity + name_part).strip()
                     cleaned = self._clean(full)
+                    
+                    print(f"      [REGEX] Entity: '{entity}' + Name: '{name_part}' -> '{cleaned}'")
                     
                     if cleaned and 8 <= len(cleaned) <= 30 and cleaned not in seen and self._is_valid(cleaned) and not self._is_garbage(cleaned):
                         seen.add(cleaned)
@@ -342,7 +360,7 @@ class EnhancedCompanyNameExtractor:
         return results
     
     def _select_best_candidate(self, candidates: List[CompanyNameCandidate]) -> Dict:
-        """Select best candidate with table priority."""
+        """Select best candidate with table priority and domain validation."""
         result = {
             'company_name': None,
             'company_name_source': None,
@@ -367,48 +385,75 @@ class EnhancedCompanyNameExtractor:
                 seen[c.value] = c
         
         unique = list(seen.values())
-        cleaned = [c for c in unique if not self._is_garbage(c.value) and 8 <= len(c.value) <= 40]
+        
+        # Extract domain name for matching
+        domain_name = self._extract_domain_name(self.base_url)
+        print(f"Domain extracted: {domain_name}")
+        
+        # Enhanced filtering
+        cleaned = []
+        for c in unique:
+            # Basic filters
+            if self._is_garbage(c.value):
+                print(f"  ✗ Filtered (garbage): {c.value}")
+                continue
+            if not (8 <= len(c.value) <= 40):
+                print(f"  ✗ Filtered (length): {c.value}")
+                continue
+            
+            # Filter associations if they don't match domain
+            if self._is_likely_association(c.value):
+                if not self._matches_domain(c.value, domain_name):
+                    print(f"  ✗ Filtered (association, no domain match): {c.value}")
+                    continue
+            
+            cleaned.append(c)
         
         if not cleaned:
             cleaned = [c for c in unique if not self._is_garbage(c.value)]
         
         legal_only = [c for c in cleaned if c.has_legal_entity]
         
-        print(f"After dedup/filter: {len(legal_only)}/{len(unique)} candidates")
+        print(f"\nAfter dedup/filter: {len(legal_only)}/{len(unique)} candidates")
         
         if not legal_only:
             result['needs_ai_verification'] = True
             return result
         
+        # Apply domain boost
         for c in legal_only:
-            print(f"  ✓ {c.value} ({c.confidence:.2f}) - {c.method} [{c.source}]")
+            domain_boost = ""
+            if self._matches_domain(c.value, domain_name):
+                c.confidence += 0.05  # Boost confidence for domain matches
+                domain_boost = " [DOMAIN MATCH]"
+            print(f"  ✓ {c.value} ({c.confidence:.2f}) - {c.method} [{c.source}]{domain_boost}")
         
         # Priority 1: Table fields from info pages (HIGHEST)
         table_info = [c for c in legal_only if c.method == 'table_field' and 'company_info' in c.source]
         if table_info:
-            best = sorted(table_info, key=lambda x: (-x.confidence, -len(x.value)))[0]
+            best = sorted(table_info, key=lambda x: (-x.confidence, len(x.value)))[0]  # Prefer SHORTER names
             reason = "Table field from company info page (HIGHEST PRIORITY)"
         else:
             # Priority 2: Any table field
             table_any = [c for c in legal_only if c.method == 'table_field']
             if table_any:
-                best = sorted(table_any, key=lambda x: (-x.confidence, -len(x.value)))[0]
+                best = sorted(table_any, key=lambda x: (-x.confidence, len(x.value)))[0]  # Prefer SHORTER names
                 reason = "Table field (HIGH CONFIDENCE)"
             else:
                 # Priority 3: Labeled fields
                 labeled = [c for c in legal_only if 'labeled_field' in c.method]
                 if labeled:
-                    best = sorted(labeled, key=lambda x: (-x.confidence, -len(x.value)))[0]
+                    best = sorted(labeled, key=lambda x: (-x.confidence, len(x.value)))[0]  # Prefer SHORTER names
                     reason = "Labeled field"
                 else:
                     # Priority 4: Formal declarations
                     formal = [c for c in legal_only if c.method == 'formal_declaration']
                     if formal:
-                        best = sorted(formal, key=lambda x: (-x.confidence, -len(x.value)))[0]
+                        best = sorted(formal, key=lambda x: (-x.confidence, len(x.value)))[0]  # Prefer SHORTER names
                         reason = "Formal declaration"
                     else:
                         # Priority 5: Fallback
-                        best = sorted(legal_only, key=lambda x: (-x.confidence, -len(x.value)))[0]
+                        best = sorted(legal_only, key=lambda x: (-x.confidence, len(x.value)))[0]  # Prefer SHORTER names
                         reason = "Best match (fallback)"
         
         print(f"\n[FINAL] {best.value}")
@@ -419,7 +464,17 @@ class EnhancedCompanyNameExtractor:
         result['company_name_source'] = best.source
         result['company_name_confidence'] = best.confidence
         result['company_name_method'] = best.method
-        result['needs_ai_verification'] = best.confidence < 0.90
+        
+        # Flag for AI verification if:
+        # - Low confidence
+        # - Long name (might be garbage)
+        # - No domain match
+        needs_ai = (
+            best.confidence < 0.90 or
+            len(best.value) > 20 or
+            not self._matches_domain(best.value, domain_name)
+        )
+        result['needs_ai_verification'] = needs_ai
         
         return result
     
@@ -461,6 +516,72 @@ class EnhancedCompanyNameExtractor:
             return True
         
         return False
+    
+    def _extract_domain_name(self, url: str) -> str:
+        """Extract core domain name for matching."""
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            domain = parsed.netloc or parsed.path
+            
+            # Remove www. and TLD
+            domain = domain.replace('www.', '')
+            domain = domain.split('.')[0]  # Get first part before .com/.co.jp etc
+            
+            # Convert to katakana/hiragana if possible (basic romanization matching)
+            # For now, just return lowercase
+            return domain.lower()
+        except:
+            return ""
+    
+    def _matches_domain(self, company_name: str, domain_name: str) -> bool:
+        """Check if company name matches the domain."""
+        if not domain_name:
+            return False
+        
+        # Remove legal entity for comparison
+        name_without_entity = company_name
+        for entity in self.LEGAL_ENTITIES:
+            name_without_entity = name_without_entity.replace(entity, '')
+        
+        name_without_entity = name_without_entity.strip()
+        
+        # Check if domain appears in company name (case insensitive)
+        # Example: "crane-a" matches "クレイン"
+        if domain_name in name_without_entity.lower():
+            return True
+        
+        # Romanization mapping (basic - can be expanded)
+        romanization_map = {
+            'konanhanbai': 'コナン販売',
+            'konan': 'コナン',
+            'wedding-b': 'ウェディング',
+            'webclub': 'ウェブ',
+            'crane': 'クレイン',
+            'cowa': '幸和',
+            'globe': 'globe',
+            'lamour': 'ラムール',
+            'kma-h': 'KMA',
+            'kma': 'KMA',
+            'aics': 'アイクス',
+            'asante-sana': 'アサンテサーナ',
+            'fairlen': 'フェアレン',
+            'nsjh': '日生情報',
+            'ita-net': 'アイティーエー',
+            'officesano': 'オフィスさの',
+        }
+        
+        # Check if domain has a known romanization
+        if domain_name in romanization_map:
+            expected = romanization_map[domain_name]
+            if expected in name_without_entity:
+                return True
+        
+        return False
+    
+    def _is_likely_association(self, company_name: str) -> bool:
+        """Check if this looks like an association/NPO rather than main company."""
+        return any(pattern in company_name for pattern in self.ASSOCIATION_PATTERNS)
     
     def _get_page_type(self, url: str) -> str:
         """Determine page type from URL."""
