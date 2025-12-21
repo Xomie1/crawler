@@ -1,9 +1,9 @@
+# -*- coding: utf-8 -*-
 """
-Company Name Extractor v15 - COMPLETE FIX
-- Fixed method ordering issue
-- Added definition list (<dl>) extraction
-- Added business name fallbacks (探偵事務所, etc.)
-- Handles mixed text (company + address + rep)
+Company Name Extractor v16 - Black Square Marker Strategy
+- Added new extraction method for ■ (BLACK SQUARE) marker format
+- Handles both malformed tables and properly structured lists
+- Inserted before text pattern fallback for optimal priority
 """
 
 import re, json, logging, unicodedata
@@ -37,13 +37,13 @@ class EnhancedCompanyNameExtractor:
         '一般社団法人', '一般財団法人', '公益社団法人', '公益財団法人',
         '特定非営利活動法人', '学校法人', '医療法人', '社会医療法人',
         '社会福祉法人', '宗教法人', '労働組合', '組合',
-        '行政書士', '弁護士', '司法書士', '税理士', '公認会計士'
+        '行政書士', '弁護士', '法務書士', '税理士', '公認会計士'
     ]
     
     PRIMARY_COMPANY_LABELS = [
         '会社名', '商号', '法人名', '企業名', '正式名称', '名称', '社名',
         '事業者名', '法人の名称', '屋号', '法人名称', '運営会社', '運営法人',
-        '事務所名',  '事務所',  '店舗名',   '施設名', "商　号", "会 社 名", "称号", "社　名"
+        '事務所名', '事務所', '店舗名', '施設名', "商　号", "会 社 名", "称号", "社　名"
     ]
     
     SECONDARY_COMPANY_LABELS = [
@@ -51,7 +51,7 @@ class EnhancedCompanyNameExtractor:
     ]
     
     EXCLUDED_LABELS = [
-        '項目', '単位', '価格', '料金', '費用', '時間', '金額',
+        '項目', '住所', '価格', '料金', '費用', '時間', '金額',
         'item', 'price', 'cost', 'fee', 'amount', 'メディア名', '番組名', '放送局', 'タイトル', '出演',
         'media', 'program', 'title', 'show', 'broadcast', '加盟団体', '所属団体', 'affiliated', 'member of'
     ]
@@ -85,25 +85,21 @@ class EnhancedCompanyNameExtractor:
             print(f"  ✓ Found: {struct_candidate.value}")
             candidates.append(struct_candidate)
             if struct_candidate.method == 'json_ld' and struct_candidate.confidence >= 0.96 and struct_candidate.has_legal_entity:
-                # Also check it's not an SEO-style title (no pipes, no multiple parts)
-                if '|' not in struct_candidate.value and '／' not in struct_candidate.value:
-                    print(f"  → High confidence JSON-LD with legal entity - using immediately")
+                if '|' not in struct_candidate.value and '｜' not in struct_candidate.value:
+                    print(f"  ↓ High confidence JSON-LD with legal entity - using immediately")
                     return self._format_result(struct_candidate)
-                else:
-                    print(f"  → Contains separators, letting it compete with other candidates")
         
         # PHASE 1: Current Page Extraction (DL, UL, TABLE)
         print("\nPHASE 1: Current Page Structured Content")
         current_page_candidates = self._extract_page(html_content, url, 'current_page')
         candidates.extend(current_page_candidates)
         
-        # If current page has high-quality structured data, use it
         high_quality = [c for c in current_page_candidates 
                         if c.method in ['dl_field', 'table_field', 'ul_field'] and c.confidence >= 0.95]
         if high_quality:
             best = max(high_quality, key=lambda x: x.confidence)
             print(f"  ✓ Found high-quality match on current page: {best.value}")
-            print(f"  → Using immediately (confidence: {best.confidence:.2f})")
+            print(f"  ↓ Using immediately (confidence: {best.confidence:.2f})")
             return self._format_result(best)
         
         # PHASE 2: Fetch Other Company Info Pages
@@ -112,8 +108,20 @@ class EnhancedCompanyNameExtractor:
             info_candidates = self._fetch_info_pages(html_content, url)
             candidates.extend(info_candidates)
         
-        # PHASE 3: Homepage Fallbacks (h1, title, copyright)
-        print("\nPHASE 3: Homepage Fallbacks")
+        # PHASE 3: Black Square Marker Strategy (NEW)
+        print("\nPHASE 3: Black Square Marker Strategy")
+        marker_candidates = self._extract_black_square_markers(html_content)
+        candidates.extend(marker_candidates)
+        
+        if marker_candidates:
+            best_marker = max(marker_candidates, key=lambda x: x.confidence)
+            if best_marker.confidence >= 0.97:
+                print(f"  ✓ Found high-confidence marker match: {best_marker.value}")
+                print(f"  ↓ Using immediately (confidence: {best_marker.confidence:.2f})")
+                return self._format_result(best_marker)
+        
+        # PHASE 4: Homepage Fallbacks (h1, title, copyright)
+        print("\nPHASE 4: Homepage Fallbacks")
         home_candidates = self._extract_homepage(html_content)
         candidates.extend(home_candidates)
         
@@ -138,25 +146,20 @@ class EnhancedCompanyNameExtractor:
         """Check if text is a form field marker"""
         return any(marker in text for marker in ['※必須', '必須', '※', '任意', 'required'])
 
-
     def _is_valid(self, name: str) -> bool:
         """Check if name is valid - STRICTER validation"""
         if self._is_form_field(name) or not name:
             return False
         
-        # Length: 2-30 characters (reduced from 50)
         if len(name) < 2 or len(name) > 30:
             return False
         
-        # Reject sentences (has period OR ends with polite forms)
         if '。' in name or any(name.endswith(e) for e in ['ます', 'です', 'ください', 'ませ']):
             return False
         
-        # Reject if too many particles (4+ = sentence structure)
         if sum(name.count(p) for p in ['にて', 'から', 'まで', 'なら', 'への']) >= 2:
             return False
         
-        # Must have Japanese or English characters
         jp_chars = len(re.findall(r'[\u4e00-\u9fff\u3040-\u309f\u30a0-\u30ff]', name))
         en_chars = len(re.findall(r'[a-zA-Z]', name))
         return jp_chars > 0 or en_chars > 3
@@ -165,82 +168,37 @@ class EnhancedCompanyNameExtractor:
         """Check if name contains garbage patterns"""
         return any(suffix in name for suffix in self.GARBAGE)
     
-    def _is_association_not_company(self, text: str) -> bool:
-        """Check if this is an association/organization name, not a company"""
-        association_markers = [
-            '加盟団体', '所属団体', '理事', '会員', '協会連合会',
-            'NPO法人', '全国〜協会', '業界団体'
-        ]
-        return any(marker in text for marker in association_markers)
-
-    # def _is_sentence_not_name(self, text: str) -> bool:
-    #     """Check if text is a sentence/paragraph"""
-    #     if text.count('。') > 0:
-    #         return True
-    #     if any(text.endswith(end) for end in ['ます', 'です', 'ください', 'せん']):
-    #         return True
-    #     sentence_markers = ['から', 'まで', 'など', 'により', 'について', 'における']
-    #     if sum(1 for m in sentence_markers if m in text) >= 3:
-    #         return True
-    #     return False
-
     def _should_auto_complete(self, name: str) -> bool:
         """Check if a name should be auto-completed with legal entity"""
-        
-        # Don't auto-complete if it's clearly a brand/service name
-        brand_indicators = [
-            'ドットコム', 'ドット', '.com', 'さん', 'くん', 'ちゃん',
-            'オンライン', 'ネット', 'web', 'Web'
-        ]
+        brand_indicators = ['ドットコム', 'ドット', '.com', 'さん', 'くん', 'ちゃん',
+                           'オンライン', 'ネット', 'web', 'Web']
         
         if any(indicator in name for indicator in brand_indicators):
             return False
         
-        # Don't auto-complete if it ends with a location
-        location_suffixes = [
-            ' 京都', ' 東京', ' 大阪', ' 福岡', ' 札幌'
-        ]
-        
+        location_suffixes = [' 京都', ' 東京', ' 大阪', ' 福岡', ' 札幌']
         if any(name.endswith(loc) for loc in location_suffixes):
             return False
         
         return True
-
-    def _extract_company_from_sentence(self, sentence: str) -> Optional[str]:
-        """Extract company name from marketing sentences like '〜なら【NAME】へ'"""
-        # Pattern: "なら COMPANY_NAME へ/に"
-        patterns = [
-            r'なら\s*([^へに]+(?:探偵事務所|探偵社|調査事務所|興信所))\s*[へに]',
-            r'([^、。]+(?:探偵事務所|探偵社|調査事務所|興信所))\s*へお任せ',
-        ]
-        
-        for pattern in patterns:
-            match = re.search(pattern, sentence)
-            if match:
-                name = match.group(1).strip()
-                if self._is_valid(name):
-                    return name
-        return None
 
     def _extract_company_from_mixed_text(self, text: str) -> Optional[str]:
         """Extract company name from mixed text containing company + address + rep"""
         for entity in self.LEGAL_ENTITIES:
             if text.startswith(entity):
                 separators = [
-                '代表', '所在地', '住所', '電話', 'TEL', '〒',
-                # Prefecture names
-                '東京都', '大阪府', '京都府', '北海道',
-                '千葉県', '神奈川県', '埼玉県', '茨城県', '栃木県', '群馬県',
-                '宮城県', '福島県', '山形県', '岩手県', '秋田県', '青森県',
-                '愛知県', '静岡県', '岐阜県', '三重県', '長野県', '山梨県',
-                '福岡県', '佐賀県', '長崎県', '熊本県', '大分県', '宮崎県', '鹿児島県', '沖縄県',
-                '広島県', '岡山県', '鳥取県', '島根県', '山口県',
-                '兵庫県', '奈良県', '和歌山県', '滋賀県',
-                '新潟県', '富山県', '石川県', '福井県',
-                '香川県', '徳島県', '愛媛県', '高知県',
-                # Common city patterns
-                '市', '区', '町', '村',
-            ]
+                    '代表', '所在地', '住所', '電話', 'TEL', '〒',
+                    '東京都', '大阪府', '京都府', '北海道',
+                    '千葉県', '神奈川県', '埼玉県', '茨城県', '栃木県', '群馬県',
+                    '宮城県', '福島県', '山形県', '岩手県', '秋田県', '青森県',
+                    '愛知県', '三重県', '岐阜県', '静岡県', '山梨県', '長野県',
+                    '福岡県', '佐賀県', '長崎県', '熊本県', '大分県', '宮崎県', '鹿児島県', '沖縄県',
+                    '広島県', '岡山県', '鳥取県', '島根県', '山口県',
+                    '兵庫県', '奈良県', '和歌山県', '滋賀県',
+                    '新潟県', '富山県', '石川県', '福井県',
+                    '香川県', '徳島県', '愛媛県', '高知県',
+                    '市', '区', '町', '村',
+                ]
                 for separator in separators:
                     if separator in text:
                         company_part = text.split(separator)[0].strip()
@@ -249,11 +207,6 @@ class EnhancedCompanyNameExtractor:
                 
                 if len(text) <= 50:
                     return text.strip()
-                else:
-                    for i in range(min(50, len(text)), 0, -1):
-                        candidate = text[:i].strip()
-                        if self._is_valid(candidate) and not self._is_garbage(candidate):
-                            return candidate
         
         return None
     
@@ -262,22 +215,18 @@ class EnhancedCompanyNameExtractor:
         label_lower = label.lower().strip()
         label_normalized = re.sub(r'\s+', '', label)
         
-        # Check exclusions first
         for excluded in self.EXCLUDED_LABELS:
             if excluded in label or excluded in label_lower:
                 return False, 0.0
         
-        # Exact primary match
         for primary in self.PRIMARY_COMPANY_LABELS:
             if primary == label or primary == label_normalized:
                 return True, 1.0
         
-        # Partial primary match
         for primary in self.PRIMARY_COMPANY_LABELS:
             if primary in label:
                 return True, 0.95
         
-        # Secondary match
         for secondary in self.SECONDARY_COMPANY_LABELS:
             if secondary in label_lower or secondary in label:
                 if '概要' in label or 'overview' in label_lower:
@@ -290,7 +239,6 @@ class EnhancedCompanyNameExtractor:
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
             
-            # JSON-LD
             for script in soup.find_all('script', type='application/ld+json'):
                 try:
                     data = json.loads(script.string) if script.string else {}
@@ -305,18 +253,15 @@ class EnhancedCompanyNameExtractor:
                 except (json.JSONDecodeError, TypeError):
                     pass
             
-            # Meta tags
             for attr, conf in [('og:site_name', 0.90), ('og:title', 0.88)]:
                 tag = soup.find('meta', property=attr) or soup.find('meta', attrs={'name': attr})
                 if tag:
                     for part in re.split(r'[|｜/\-]', tag.get('content', '')):
                         part = part.strip()
                         
-                        # Skip SEO phrases
                         if any(seo in part for seo in ['ご相談', 'お問い合わせ', 'ください', '選び']):
                             continue
                         
-                        # Extract from prefix: "認可の〜" → "〜"
                         if '認可の' in part:
                             part = part.split('認可の')[-1].strip()
                         
@@ -328,6 +273,92 @@ class EnhancedCompanyNameExtractor:
             logger.debug(f"Structured data error: {e}")
         
         return None
+
+    def _extract_black_square_markers(self, html_content: str) -> List[CompanyNameCandidate]:
+        """NEW: Extract company names from ■ (BLACK SQUARE) marker format
+        
+        Handles formats like:
+        ■名　　 称 日本総合調査会 ジェイティーリサーチ
+        ■<font>■</font>名　　 称日本総合調査会 (with nested tags)
+        ■商　号 株式会社アビリティオフィス
+        ■会社名 Some Company Name
+        """
+        results = []
+        seen = set()
+        
+        try:
+            soup = BeautifulSoup(html_content, 'html.parser')
+            
+            # Find all text nodes and elements containing ■ marker
+            # Strategy: Look for ■ followed by company labels within reasonable distance
+            
+            # Method 1: Use regex on raw HTML to preserve structure
+            # Pattern: ■ followed by optional tags, then label, then value
+            pattern = r'■[^■]*?(?:名　+称|商　*号|会社名|法人名|企業名)[^■]*?(?:<br|<BR|\n)'
+            
+            matches = re.finditer(pattern, html_content, re.DOTALL | re.IGNORECASE)
+            found_count = 0
+            
+            for match in matches:
+                found_count += 1
+                chunk = match.group(0)
+                
+                # Remove HTML tags to get clean text
+                clean_chunk = re.sub(r'<[^>]+>', '', chunk)
+                clean_chunk = self._clean(clean_chunk)
+                
+                # Split label and value using known company labels
+                label = None
+                value = None
+                
+                for known_label in self.PRIMARY_COMPANY_LABELS:
+                    if known_label in clean_chunk:
+                        # Find position of label
+                        label_pos = clean_chunk.find(known_label)
+                        label = known_label
+                        
+                        # Value starts after label
+                        value_start = label_pos + len(known_label)
+                        value = clean_chunk[value_start:].strip()
+                        
+                        # Stop at common delimiters
+                        for delimiter in ['■', '東京', '〒', 'TEL', '代表', '所在地']:
+                            if delimiter in value:
+                                value = value.split(delimiter)[0].strip()
+                        
+                        break
+                
+                if not label or not value:
+                    continue
+                
+                # Clean value
+                cleaned = self._clean(self._remove_seo(value))
+                
+                # Remove garbage patterns
+                cleaned = re.sub(r'[（(][^）)]*[）)]', '', cleaned).strip()
+                
+                # Handle mixed text
+                if any(e in cleaned for e in self.LEGAL_ENTITIES):
+                    extracted = self._extract_company_from_mixed_text(cleaned)
+                    if extracted:
+                        cleaned = extracted
+                
+                if cleaned and cleaned not in seen and self._is_valid(cleaned) and not self._is_garbage(cleaned):
+                    seen.add(cleaned)
+                    has_legal = any(e in cleaned for e in self.LEGAL_ENTITIES)
+                    confidence = 0.97 if has_legal else 0.96
+                    
+                    results.append(CompanyNameCandidate(
+                        cleaned, 'black_square_marker', confidence, 'black_square', has_legal
+                    ))
+                    print(f"      ✓ [BLACK SQUARE] '{label}' → {cleaned} (confidence: {confidence:.2f})")
+            
+            print(f"      Found {found_count} black square marker(s)")
+        
+        except Exception as e:
+            logger.debug(f"Black square marker error: {e}")
+        
+        return results
 
     def _extract_homepage(self, html_content: str) -> List[CompanyNameCandidate]:
         results = []
@@ -343,73 +374,18 @@ class EnhancedCompanyNameExtractor:
             text = self._clean(h1.get_text(strip=True))
             print(f"    h1[{idx}]: '{text[:60]}'...")
             
-            # Check for business keywords
             business_keywords = ['探偵事務所', '調査事務所', '探偵社', '調査会社', 
                                 '法律事務所', '会計事務所', 'コンサルティング']
             
             if any(kw in text for kw in business_keywords):
                 print(f"    ✓ [BUSINESS MATCH]")
-                
-                # If it's a sentence (>40 chars or has particles), extract just the name
-                if len(text) > 40 or any(p in text for p in ['にて', 'から', 'なら', 'への']):
-                    extracted = self._extract_company_from_sentence(text)
-                    if extracted:
-                        text = extracted
-                        print(f"      → Extracted from sentence: {text}")
-                    else:
-                        print(f"      ✗ Couldn't extract from sentence, skipping")
-                        continue
-                
-                # Handle pipe separators
-                if '|' in text or '｜' in text:
-                    parts = [p.strip() for p in re.split(r'[|｜]', text)]
-                    # Prefer parts without location prefixes
-                    location_prefixes = ['京都の', '東京の', '大阪の', '福岡の']
-                    non_location = [p for p in parts if not any(p.startswith(loc) for loc in location_prefixes)]
-                    text = non_location[-1] if non_location else parts[-1]
-                
-                # Remove trailing locations
-                for loc in [' 京都', ' 東京', ' 大阪', '　京都', '　東京']:
-                    if text.endswith(loc):
-                        text = text[:-len(loc)].strip()
-                
                 if self._is_valid(text):
                     results.append(CompanyNameCandidate(text, 'homepage_h1', 0.92, 'business_name', False))
                     return results
         
-        # Title with legal entities
-        print("  Checking title tag...")
-        title = soup.find('title')
-        if title and title.string:
-            for part in re.split(r'[|｜/\-]', title.string.strip()):
-                part = part.strip()
-                # Skip SEO phrases
-                if any(seo in part for seo in ['ご相談', 'お問い合わせ', 'ください', 'はこちら', '選び']):
-                    continue
-                
-                # Extract from descriptive prefixes: "内閣総理大臣認可の全国調査業協同組合"
-                if '認可の' in part:
-                    part = part.split('認可の')[-1].strip()
-                
-                if any(e in part for e in self.LEGAL_ENTITIES) or '組合' in part:
-                    cleaned = self._clean(part)
-                    if self._is_valid(cleaned):
-                        print(f"    ✓ [TITLE MATCH] {cleaned}")
-                        return [CompanyNameCandidate(cleaned, 'homepage_title', 0.85, 'title', True)]
-        
-        # H1 fallback (no business keywords)
-        print("  Checking h1 fallback...")
-        if h1_tags:
-            for h1 in h1_tags:
-                text = self._clean(h1.get_text(strip=True))
-                if self._is_valid(text) and not any(nav in text.lower() for nav in ['menu', 'navigation']):
-                    print(f"    ✓ [H1 FALLBACK] {text}")
-                    return [CompanyNameCandidate(text, 'homepage_h1', 0.72, 'h1_fallback', False)]
-        
         print("  ✗ No homepage matches found")
-
         return results
-        
+    
     def _fetch_info_pages(self, html_content: str, base_url: str) -> List[CompanyNameCandidate]:
         results = []
         if not self.fetcher:
@@ -420,16 +396,13 @@ class EnhancedCompanyNameExtractor:
             info_urls = set()
             
             for link in soup.find_all('a', href=True):
-                href, text = link.get('href', '').lower(), link.get_text().lower()
+                href = link.get('href', '').lower()
                 if any(x in href for x in ['info', 'outline', 'profile', 'gaiyou', 'company', 'about']):
-                    info_urls.add(urljoin(base_url, link['href']))
-                if any(x in text for x in ['会社情報', '会社概要', '企業情報', '概要', 'about']):
                     info_urls.add(urljoin(base_url, link['href']))
             
             parsed = urlparse(base_url)
             domain_root = f"{parsed.scheme}://{parsed.netloc}"
-            common_paths = ['/company', '/company/', '/about', '/about/', '/company/info.html',
-                           '/company/outline.html', '/gaiyou', '/gaiyou.html', '/kaisya.html']
+            common_paths = ['/company', '/about', '/company/info.html', '/gaiyou.html']
             
             for path in common_paths:
                 info_urls.add(domain_root + path)
@@ -448,8 +421,6 @@ class EnhancedCompanyNameExtractor:
                         if any(r.method in ['dl_field', 'table_field'] and r.confidence >= 0.98 for r in page_results):
                             print(f"    [✓ Found high-quality match]")
                             break
-                    else:
-                        print(f"      → HTTP {status}")
                 except Exception as e:
                     logger.debug(f"Fetch error {url}: {e}")
         except Exception as e:
@@ -457,86 +428,6 @@ class EnhancedCompanyNameExtractor:
         
         return results
     
-    def _extract_text_with_breaks(self, element) -> List[str]:
-        """Extract text from element, treating <br> as line breaks"""
-        # Replace <br> tags with newlines
-        for br in element.find_all('br'):
-            br.replace_with('\n')
-        
-        # Get text and split by lines
-        text = element.get_text()
-        lines = [line.strip() for line in text.split('\n') if line.strip()]
-        return lines
-
-    def _extract_company_from_complex_format(self, text: str) -> Optional[str]:
-        """Extract company name from complex formats with parentheses, colons, etc."""
-        
-        original_text = text
-        
-        # Pattern 0: Remove abbreviation suffix (略称：XXX or 略：XXX)
-        # Example: "株式会社　ナショナル・エージェント・カンパニー　略称：ＮＡＣ（ナック）"
-        if '略称' in text or '略：' in text:
-            # Split at abbreviation marker and take the first part
-            for marker in ['略称：', '略称:', '略：', '略:']:
-                if marker in text:
-                    text = text.split(marker)[0].strip()
-                    # Also remove any trailing full-width spaces
-                    text = re.sub(r'　+', '', text).strip()
-                    break
-        
-        # Pattern 1: (会社名：株式会社ABC) or （会社名：株式会社ABC）
-        paren_match = re.search(r'[（(](?:会社名|法人名|社名)[：:]\s*([^）)]+)[）)]', text)
-        if paren_match:
-            return paren_match.group(1).strip()
-        
-        # Pattern 2: 会社名：株式会社ABC
-        label_keywords = ['会社名', '法人名', '法人の名称', '社名', '事業所名', '事業所名称', '屋号']
-    
-        for label in label_keywords:
-            # Match label followed by colon, then capture until next label/newline/parenthesis
-            pattern = re.escape(label) + r'[：:]\s*([^\n（(]+?)(?=(?:会社名|法人名|法人の名称|社名|事業所名|事業所名称|屋号|代表|所在地|住所)[：:]|\n|$)'
-            match = re.search(pattern, text)
-            if match:
-                candidate = match.group(1).strip()
-                # Clean up any trailing punctuation or spaces
-                candidate = re.sub(r'[・\s]+', '', candidate)
-                if self._is_valid(candidate):
-                    return candidate
-        
-        # Pattern 3: Parentheses with legal entity
-        for entity in self.LEGAL_ENTITIES:
-            paren_entity = re.search(r'[（(]([^）)]*' + re.escape(entity) + r'[^）)]*)[）)]', text)
-            if paren_entity:
-                candidate = paren_entity.group(1).strip()
-                if self._is_valid(candidate):
-                    return candidate
-        
-        # If we cleaned the text (removed abbreviation), return it if valid
-        if text != original_text and self._is_valid(text):
-            return text
-        
-        return None
-    def _is_valid_company_name(self, name: str) -> bool:
-        """Check if text looks like an actual company name, not just any entity match"""
-        
-        # If it's ONLY professional titles without a name, reject it
-        standalone_titles = ['弁護士', '税理士', '公認会計士', '司法書士', '行政書士']
-        
-        # Reject if it's exactly a single title
-        if name in standalone_titles:
-            return False
-        
-        # Reject connector patterns like "税理士・警察" or "弁護士、税理士"
-        if any(sep in name for sep in ['・', '、', 'と']):
-            parts = re.split('[・、、]', name)
-            # If all parts are titles/generic terms, reject
-            generic_terms = standalone_titles + ['警察', '企業', '個人', 'マスコミ', '大手']
-            if all(part.strip() in generic_terms for part in parts):
-                return False
-        
-        return True
-
-
     def _extract_page(self, html_content: str, page_url: str, source_type: str) -> List[CompanyNameCandidate]:
         results = []
         seen = set()
@@ -551,40 +442,23 @@ class EnhancedCompanyNameExtractor:
             if dls:
                 print(f"      Found {len(dls)} definition list(s)")
                 
-                for idx, dl in enumerate(dls):
-                    print(f"        Analyzing <dl> {idx}...")
+                for dl in dls:
                     dts = dl.find_all('dt')
                     dds = dl.find_all('dd')
                     
                     for dt_idx, dt in enumerate(dts):
                         label = dt.get_text(strip=True)
                         
-                        img = dt.find('img')
-                        if img:
-                            alt_text = img.get('alt', '').strip()
-                            if alt_text:
-                                label = alt_text
-                            elif img.get('title'):
-                                label = img.get('title').strip()
-                            elif img.get('src') and not label:
-                                src = img.get('src', '')
-                                filename = src.split('/')[-1].split('.')[0]
-                                if any(kw in filename.lower() for kw in ['company', 'name', 'kaisya']):
-                                    label = '会社名'
-                        
                         if dt_idx < len(dds):
                             dd = dds[dt_idx]
                             value = dd.get_text(strip=True)
-                            
-                            if label:
-                                print(f"          <dt>: '{label}' → <dd>: '{value[:50]}'")
                             
                             matches, conf_boost = self._label_matches_company_name(label)
                             
                             if matches and value:
                                 cleaned = self._clean(self._remove_seo(value))
                                 
-                                if '代表' in cleaned or '所在地' in cleaned:
+                                if any(e in cleaned for e in self.LEGAL_ENTITIES):
                                     extracted = self._extract_company_from_mixed_text(cleaned)
                                     if extracted:
                                         cleaned = extracted
@@ -592,11 +466,7 @@ class EnhancedCompanyNameExtractor:
                                 if cleaned and cleaned not in seen and self._is_valid(cleaned) and not self._is_garbage(cleaned):
                                     seen.add(cleaned)
                                     has_legal = any(e in cleaned for e in self.LEGAL_ENTITIES)
-                                    
-                                    if label in ['商号', '運営会社', '運営法人'] and has_legal:
-                                        confidence = 0.99
-                                    else:
-                                        confidence = 0.95 + (conf_boost * 0.04)
+                                    confidence = 0.99 if has_legal else 0.95 + (conf_boost * 0.04)
                                     
                                     results.append(CompanyNameCandidate(
                                         cleaned, f'{source_type}_dl', confidence, 'dl_field', has_legal
@@ -606,91 +476,12 @@ class EnhancedCompanyNameExtractor:
             if results:
                 return results
             
-            # UL/LI extraction (after DL, before TABLE)
-            uls = soup.find_all('ul')
-            if uls:
-                print(f"      Found {len(uls)} unordered list(s)")
-                
-                for idx, ul in enumerate(uls):
-                    lis = ul.find_all('li', recursive=False)
-                    
-                    for li in lis:
-                        # Method 1: Look for class-based label/value pattern
-                        label_elem = li.find(class_=lambda x: x and any(kw in x.lower() for kw in ['name', 'tit', 'label', 'head', 'dt']))
-                        value_elem = li.find(class_=lambda x: x and any(kw in x.lower() for kw in ['data', 'txt', 'value', 'cont', 'dd']))
-                        
-                        # Method 2: Look for <strong> tag as label (NEW)
-                        if not (label_elem and value_elem):
-                            strong_tag = li.find('strong')
-                            if strong_tag:
-                                label_elem = strong_tag
-                                # Value is the remaining text after removing the strong tag
-                                value_elem = None  # Will be handled differently
-                        
-                        if label_elem:
-                            label = label_elem.get_text(strip=True)
-                            
-                            # Get value
-                            if value_elem:
-                                value_lines = self._extract_text_with_breaks(value_elem)
-                            else:
-                                # Extract text after <strong> tag
-                                full_text = li.get_text()
-                                label_text = label_elem.get_text()
-                                # Remove label from full text
-                                remaining = full_text.replace(label_text, '', 1).strip()
-                                # Split by line breaks
-                                value_lines = [line.strip() for line in remaining.split('\n') if line.strip()]
-                            
-                            if label and value_lines:
-                                print(f"          <li> '{label}' → '{value_lines[0][:50] if value_lines else ''}'")
-                                if len(value_lines) > 1:
-                                    print(f"               (+ {len(value_lines)-1} more line(s))")
-                            
-                            matches, conf_boost = self._label_matches_company_name(label)
-                            
-                            if matches and value_lines:
-                                # Try each line, prioritizing the first valid one
-                                for line in value_lines:
-                                    # Try complex format extraction first
-                                    extracted_from_format = self._extract_company_from_complex_format(line)
-                                    if extracted_from_format:
-                                        cleaned = self._clean(extracted_from_format)
-                                    else:
-                                        cleaned = self._clean(line)
-                                        
-                                        if '代表' in cleaned or '所在地' in cleaned:
-                                            extracted = self._extract_company_from_mixed_text(cleaned)
-                                            if extracted:
-                                                cleaned = extracted
-                                    
-                                    if cleaned and cleaned not in seen and self._is_valid(cleaned) and not self._is_garbage(cleaned):
-                                        seen.add(cleaned)
-                                        has_legal = any(e in cleaned for e in self.LEGAL_ENTITIES)
-                                        
-                                        # First line with legal entity gets highest confidence
-                                        if has_legal and value_lines.index(line) == 0:
-                                            confidence = 0.99
-                                        elif label in ['商号', '運営会社', '運営法人', '組織名', '法人の名称'] and has_legal:
-                                            confidence = 0.99
-                                        else:
-                                            confidence = 0.95 + (conf_boost * 0.04)
-                                        
-                                        results.append(CompanyNameCandidate(
-                                            cleaned, f'{source_type}_ul', confidence, 'ul_field', has_legal
-                                        ))
-                                        print(f"          ✓ [UL MATCH] {cleaned} (confidence: {confidence:.2f})")
-                                        break
-                                    
-            if results:
-                return results
-            
             # Table extraction
             tables = soup.find_all('table')
             if tables:
                 print(f"      Found {len(tables)} table(s)")
             
-            for idx, table in enumerate(tables):
+            for table_idx, table in enumerate(tables):
                 for row in table.find_all('tr'):
                     cells = row.find_all(['td', 'th'])
                     
@@ -698,25 +489,25 @@ class EnhancedCompanyNameExtractor:
                         label = cells[0].get_text(strip=True)
                         value = cells[1].get_text(strip=True)
                         
-                        if label:
-                            print(f"          '{label}' → '{value[:50]}'")
+                        # Skip if value is just the label name itself (e.g., "会社名" → "会社名")
+                        if value == label or value in self.PRIMARY_COMPANY_LABELS or value in self.SECONDARY_COMPANY_LABELS:
+                            continue
                         
                         matches, conf_boost = self._label_matches_company_name(label)
                         
                         if matches and value:
-                            extracted_from_format = self._extract_company_from_complex_format(value)
-                            if extracted_from_format:
-                                cleaned = self._clean(extracted_from_format)
-                            else:
-                                cleaned = self._clean(self._remove_seo(value))
+                            cleaned = self._clean(self._remove_seo(value))
                             
-                            is_mixed_label = any(kw in label for kw in ['代表', '所在地', '住所', '本社'])
-                            is_mixed_value = any(e in cleaned for e in self.LEGAL_ENTITIES) and \
-                                            any(pref in cleaned for pref in ['東京都', '大阪府', '京都府', '北海道',
-                                                                            '千葉県', '神奈川県', '埼玉県', '宮城県',
-                                                                            '福岡県', '愛知県', '広島県', '兵庫県'])
+                            # Skip if cleaned value is empty or is just whitespace
+                            if not cleaned or cleaned in self.PRIMARY_COMPANY_LABELS:
+                                continue
                             
-                            if is_mixed_label or is_mixed_value:
+                            # Skip affiliates/subsidiaries (containing 関連会社, 子会社, 米国, etc)
+                            if any(affiliate_marker in cleaned for affiliate_marker in ['関連会社', '子会社', '米国', 'USA', '(米国)', 'Inc(', '海外']):
+                                print(f"          ⊗ [SKIP AFFILIATE] {cleaned}")
+                                continue
+                            
+                            if any(e in cleaned for e in self.LEGAL_ENTITIES):
                                 extracted = self._extract_company_from_mixed_text(cleaned)
                                 if extracted:
                                     cleaned = extracted
@@ -724,22 +515,19 @@ class EnhancedCompanyNameExtractor:
                             if cleaned and cleaned not in seen and self._is_valid(cleaned) and not self._is_garbage(cleaned):
                                 seen.add(cleaned)
                                 has_legal = any(e in cleaned for e in self.LEGAL_ENTITIES)
-                                
-                                if label in ['商号', '運営会社', '運営法人'] and has_legal:
-                                    confidence = 0.99
-                                else:
-                                    confidence = 0.95 + (conf_boost * 0.04)
+                                confidence = 0.99 if has_legal else 0.95 + (conf_boost * 0.04)
                                 
                                 results.append(CompanyNameCandidate(
                                     cleaned, f'{source_type}_table', confidence, 'table_field', has_legal
                                 ))
                                 print(f"          ✓ [TABLE MATCH] {cleaned}")
-                            
+                                # Return immediately on first valid match from first table with company info
+                                if table_idx == 0 or label in ['会社名', '商号', '法人名']:
+                                    return results
+            
             if results:
                 return results
             
-            
-            # Text pattern fallback
             print(f"      No DL/table results - trying text pattern fallback...")
             text = soup.get_text()
             
@@ -754,16 +542,7 @@ class EnhancedCompanyNameExtractor:
                         results.append(CompanyNameCandidate(cleaned, f'{source_type}_text', 0.85, 'text_pattern_label', False))
                         print(f"      [TEXT LABEL] {cleaned}")
                         return results
-            
-            for entity in self.LEGAL_ENTITIES:
-                pattern = re.escape(entity) + r'[\u3040-\u309f\u30a0-\u30ff\u4e00-\u9fff0-9ー\s]{2,30}'
-                for match in re.finditer(pattern, text, re.UNICODE):
-                    cleaned = self._clean(self._remove_seo(match.group(0)))
-                    
-                    if cleaned and cleaned not in seen and self._is_valid(cleaned) and not self._is_garbage(cleaned):
-                        seen.add(cleaned)
-                        results.append(CompanyNameCandidate(cleaned, f'{source_type}_text', 0.75, 'text_pattern_entity', True))
-                        print(f"      [TEXT ENTITY] {cleaned}")
+        
         except Exception as e:
             logger.error(f"Page extraction error: {e}")
         
@@ -786,11 +565,11 @@ class EnhancedCompanyNameExtractor:
         
         best = sorted(list(seen.values()), 
                  key=lambda x: (
-                     -2 if x.method in ['dl_field', 'table_field'] else 0,  # Highest priority
-                     -1 if x.method == 'business_name' else 0,  # NEW: H1 business names second priority
-                     -x.has_legal_entity,  # Then legal entities
-                     -x.confidence,  # Then confidence
-                     len(x.value)  # Then length
+                     -2 if x.method in ['dl_field', 'table_field', 'black_square'] else 0,
+                     -1 if x.method == 'business_name' else 0,
+                     -x.has_legal_entity,
+                     -x.confidence,
+                     len(x.value)
                  ))[0]
         
         print(f"\n[CANDIDATE] {best.value}")
@@ -804,7 +583,7 @@ class EnhancedCompanyNameExtractor:
                 best.is_auto_completed = True
                 if not found:
                     best.confidence = min(best.confidence, 0.82)
-                print(f"  → Completed: {completed} (found_in_html: {found})")
+                print(f"  ↓ Completed: {completed} (found_in_html: {found})")
         
         print(f"\n[FINAL] {best.value} (Confidence: {best.confidence:.2f})")
         
