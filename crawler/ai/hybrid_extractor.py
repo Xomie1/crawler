@@ -200,7 +200,7 @@ class HybridExtractor:
         rule_based_result: Optional[str] = None
     ) -> Dict:
         """
-        Extract industry with hybrid approach.
+        Extract industry with hybrid approach and fallback to "その他サービス".
         
         Args:
             url: Website URL
@@ -215,7 +215,18 @@ class HybridExtractor:
         # If always use AI, skip rule-based
         if self.always_use_ai and self.use_ai:
             logger.info(f"Using AI-only mode for {field}")
-            return self._extract_with_ai(url, html_content, field, None)
+            ai_result = self._extract_with_ai(url, html_content, field, None)
+            # Check if AI returned null or failed
+            if not ai_result.get('value'):
+                logger.warning(f"AI returned null for {field}, using fallback")
+                from crawler.extractors.industry_extractor import IndustryExtractor
+                return {
+                    'value': IndustryExtractor.DEFAULT_INDUSTRY,
+                    'confidence': IndustryExtractor.DEFAULT_CONFIDENCE,
+                    'source': 'fallback',
+                    'used_ai': False
+                }
+            return ai_result
         
         # Use rule-based result if available
         if rule_based_result:
@@ -237,7 +248,17 @@ class HybridExtractor:
             # Use AI to improve result
             if self.use_ai:
                 logger.info(f"Rule-based {field} confidence low, using AI")
-                return self._extract_with_ai(url, html_content, field, {'industry': rule_based_result})
+                ai_result = self._extract_with_ai(url, html_content, field, {'industry': rule_based_result})
+                # Check if AI returned null or failed
+                if not ai_result.get('value'):
+                    logger.warning(f"AI returned null, keeping rule-based: {rule_based_result}")
+                    return {
+                        'value': rule_based_result,
+                        'confidence': confidence,
+                        'source': 'rule_based',
+                        'used_ai': False
+                    }
+                return ai_result
             else:
                 return {
                     'value': rule_based_result,
@@ -249,12 +270,26 @@ class HybridExtractor:
         # No rule-based result, use AI if available
         if self.use_ai:
             logger.info(f"No rule-based {field}, using AI")
-            return self._extract_with_ai(url, html_content, field, None)
+            ai_result = self._extract_with_ai(url, html_content, field, None)
+            # Check if AI returned null or failed
+            if not ai_result.get('value'):
+                logger.warning(f"AI returned null for {field}, using fallback")
+                from crawler.extractors.industry_extractor import IndustryExtractor
+                return {
+                    'value': IndustryExtractor.DEFAULT_INDUSTRY,
+                    'confidence': IndustryExtractor.DEFAULT_CONFIDENCE,
+                    'source': 'fallback',
+                    'used_ai': True  # We tried AI but it failed
+                }
+            return ai_result
         else:
+            # No AI available and no rule-based result - use fallback
+            logger.warning(f"No {field} found and AI unavailable, using fallback")
+            from crawler.extractors.industry_extractor import IndustryExtractor
             return {
-                'value': None,
-                'confidence': 0.0,
-                'source': 'not_found',
+                'value': IndustryExtractor.DEFAULT_INDUSTRY,
+                'confidence': IndustryExtractor.DEFAULT_CONFIDENCE,
+                'source': 'fallback',
                 'used_ai': False
             }
     

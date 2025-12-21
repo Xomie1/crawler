@@ -132,6 +132,7 @@ class EnhancedContactFormDetector:
         '/contact/inquiry.html',
         '/inquiry',
         '/inquiry/',
+        '/お問い合わせ・お申し込み.html'
     ]
     
     HIGH_PRIORITY_FALLBACK_URLS = [

@@ -26,7 +26,7 @@ class CrawlResult:
         crawl_status: str = "success",
         error_message: Optional[str] = None,
         form_detection_method: Optional[str] = None,
-        # AI-related fields
+        # AI-related fields (kept for internal use but not exported)
         email_confidence: float = 0.0,
         email_used_ai: bool = False,
         company_name_confidence: float = 0.0,
@@ -69,12 +69,12 @@ class CrawlResult:
         self.error_message = error_message
         self.form_detection_method = form_detection_method
         
-        # AI-related fields
+        # AI-related fields (kept internally for logging/debugging)
         self.email_confidence = email_confidence
         self.email_used_ai = email_used_ai
         self.company_name_confidence = company_name_confidence
         self.company_name_used_ai = company_name_used_ai
-        self.company_name_source = None
+        self.company_name_source = None  # Will be set by engine
         self.industry_confidence = industry_confidence
         self.industry_used_ai = industry_used_ai
         self.ai_extraction_method = ai_extraction_method
@@ -84,7 +84,7 @@ class CrawlResult:
         Convert crawl result to dictionary.
         
         Returns:
-            Dictionary representation ready for JSON serialization
+            Dictionary with only essential fields for export
         """
         return {
             'url': self.url,
@@ -94,19 +94,8 @@ class CrawlResult:
             'industry': self.industry,
             'httpStatus': self.http_status,
             'robotsAllowed': self.robots_allowed,
-            'lastCrawledAt': self.last_crawled_at.isoformat(),
             'crawlStatus': self.crawl_status,
-            'errorMessage': self.error_message,
-            'formDetectionMethod': self.form_detection_method,
-            # AI-related fields
-            'emailConfidence': round(self.email_confidence, 2) if self.email_confidence else 0.0,
-            'emailUsedAI': self.email_used_ai,
-            'companyNameConfidence': round(self.company_name_confidence, 2) if self.company_name_confidence else 0.0,
-            'companyNameUsedAI': self.company_name_used_ai,
-            'companyNameSource': self.company_name_source,
-            'industryConfidence': round(self.industry_confidence, 2) if self.industry_confidence else 0.0,
-            'industryUsedAI': self.industry_used_ai,
-            'aiExtractionMethod': self.ai_extraction_method
+            'errorMessage': self.error_message
         }
     
     def to_json(self) -> str:

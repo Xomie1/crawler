@@ -1,6 +1,6 @@
 """
-Industry Extraction Module
-Extracts industry information from websites using multiple detection methods.
+Industry Extraction Module - WITH FALLBACK
+Extracts industry information with fallback to "その他サービス" when extraction fails
 """
 
 import re
@@ -30,7 +30,11 @@ class IndustryCandidate:
 
 
 class IndustryExtractor:
-    """Extracts industry information from websites."""
+    """Extracts industry information from websites with fallback support."""
+    
+    # Default fallback when no industry can be determined
+    DEFAULT_INDUSTRY = "その他サービス"  # "Other Services"
+    DEFAULT_CONFIDENCE = 0.3  # Low confidence for fallback
     
     # Industry keywords mapping (Japanese only)
     INDUSTRY_KEYWORDS = {
@@ -48,19 +52,46 @@ class IndustryExtractor:
         'logistics': ['物流', '運輸', '配送', '輸送', 'サプライチェーン', '運送', '倉庫', '物流センター'],
         'consulting': ['コンサルティング', 'コンサル', 'アドバイザリー', '経営コンサル', '経営相談'],
         'media': ['メディア', '出版', '放送', 'エンターテインメント', '広告', '広告代理店', 'テレビ', 'ラジオ'],
-        'telecommunications': ['通信', 'テレコム', 'モバイル', '無線', '通信事業', '通信会社', '携帯電話']
+        'telecommunications': ['通信', 'テレコム', 'モバイル', '無線', '通信事業', '通信会社', '携帯電話'],
+        'investigation': ['探偵', '調査', '興信所', '探偵事務所', '調査会社', '身元調査', '素行調査'],  # NEW: Investigation services
+        'legal': ['法律', '法務', '弁護士', '司法書士', '行政書士', '法律事務所'],  # NEW: Legal services
+        'accounting': ['会計', '税理士', '公認会計士', '会計事務所', '税務'],  # NEW: Accounting services
     }
     
-    def __init__(self, base_url: str, fetcher=None):
+    # Japanese industry names for output
+    INDUSTRY_NAMES_JP = {
+        'technology': 'IT・情報技術',
+        'finance': '金融',
+        'retail': '小売',
+        'healthcare': '医療・ヘルスケア',
+        'education': '教育',
+        'manufacturing': '製造業',
+        'construction': '建設・建築',
+        'real_estate': '不動産',
+        'food': '飲食・食品',
+        'automotive': '自動車',
+        'energy': 'エネルギー',
+        'logistics': '物流・運輸',
+        'consulting': 'コンサルティング',
+        'media': 'メディア・広告',
+        'telecommunications': '通信',
+        'investigation': '探偵・調査業',
+        'legal': '法務・法律サービス',
+        'accounting': '会計・税務',
+    }
+    
+    def __init__(self, base_url: str, fetcher=None, use_fallback: bool = True):
         """
         Initialize industry extractor.
         
         Args:
             base_url: Base URL of the website
             fetcher: PageFetcher instance for fetching additional pages
+            use_fallback: Whether to use fallback value when extraction fails
         """
         self.base_url = base_url
         self.fetcher = fetcher
+        self.use_fallback = use_fallback
     
     def extract(self, html_content: str, final_url: Optional[str] = None) -> Dict:
         """
@@ -110,6 +141,12 @@ class IndustryExtractor:
                 f"Extracted industry: {best.value} "
                 f"(source: {best.source}, confidence: {best.confidence:.2f})"
             )
+        elif self.use_fallback:
+            # No industry found - use fallback
+            logger.info(f"No industry found, using fallback: {self.DEFAULT_INDUSTRY}")
+            result['industry'] = self.DEFAULT_INDUSTRY
+            result['industry_source'] = 'fallback'
+            result['industry_confidence'] = self.DEFAULT_CONFIDENCE
         
         return result
     
@@ -125,7 +162,11 @@ class IndustryExtractor:
                 industry = self._match_industry_keywords(description)
                 if industry:
                     logger.debug(f"Found industry in meta description: {industry}")
-                    return IndustryCandidate(industry, 'metadata', 0.8)
+                    return IndustryCandidate(
+                        self.INDUSTRY_NAMES_JP.get(industry, industry), 
+                        'metadata', 
+                        0.8
+                    )
             
             # Check og:description
             og_description = soup.find('meta', property='og:description')
@@ -134,7 +175,11 @@ class IndustryExtractor:
                 industry = self._match_industry_keywords(description)
                 if industry:
                     logger.debug(f"Found industry in og:description: {industry}")
-                    return IndustryCandidate(industry, 'metadata', 0.8)
+                    return IndustryCandidate(
+                        self.INDUSTRY_NAMES_JP.get(industry, industry),
+                        'metadata', 
+                        0.8
+                    )
             
             # Check keywords meta tag
             meta_keywords = soup.find('meta', {'name': 'keywords'})
@@ -143,7 +188,11 @@ class IndustryExtractor:
                 industry = self._match_industry_keywords(keywords)
                 if industry:
                     logger.debug(f"Found industry in meta keywords: {industry}")
-                    return IndustryCandidate(industry, 'metadata', 0.75)
+                    return IndustryCandidate(
+                        self.INDUSTRY_NAMES_JP.get(industry, industry),
+                        'metadata', 
+                        0.75
+                    )
             
         except Exception as e:
             logger.error(f"Error extracting industry from metadata: {e}")
@@ -163,7 +212,11 @@ class IndustryExtractor:
                     industry = self._extract_industry_from_json(data)
                     if industry:
                         logger.debug(f"Found industry in JSON-LD: {industry}")
-                        return IndustryCandidate(industry, 'jsonld', 0.9)
+                        return IndustryCandidate(
+                            self.INDUSTRY_NAMES_JP.get(industry, industry),
+                            'jsonld', 
+                            0.9
+                        )
                 except (json.JSONDecodeError, TypeError):
                     continue
             
@@ -242,7 +295,11 @@ class IndustryExtractor:
             industry = self._match_industry_keywords(combined_text)
             if industry:
                 logger.debug(f"Found industry in text: {industry}")
-                return IndustryCandidate(industry, 'text', 0.6)
+                return IndustryCandidate(
+                    self.INDUSTRY_NAMES_JP.get(industry, industry),
+                    'text', 
+                    0.6
+                )
             
         except Exception as e:
             logger.error(f"Error extracting industry from text: {e}")
@@ -270,4 +327,7 @@ class IndustryExtractor:
                 best_match = industry
         
         return best_match if best_score > 0 else None
-
+    
+    def get_fallback_industry(self) -> str:
+        """Get the default fallback industry."""
+        return self.DEFAULT_INDUSTRY

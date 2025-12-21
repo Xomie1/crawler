@@ -58,19 +58,22 @@ def export_jsonl_to_excel(jsonl_file: str, output_file: str = None) -> str:
     # Convert to DataFrame
     df = pd.DataFrame(records)
     
-    # Reorder columns for readability
+    # Define column order (only essential fields)
     column_order = [
-        'url', 'companyName', 'email', 'inquiryFormUrl',
-        'industry', 'httpStatus', 'crawlStatus',
-        'companyNameConfidence', 'emailConfidence', 'industryConfidence',
-        'formDetectionMethod', 'lastCrawledAt', 'errorMessage'
+        'url',
+        'email', 
+        'inquiryFormUrl',
+        'companyName',
+        'industry',
+        'httpStatus',
+        'robotsAllowed',
+        'crawlStatus',
+        'errorMessage'
     ]
     
     # Only include columns that exist
     available_cols = [col for col in column_order if col in df.columns]
-    other_cols = [col for col in df.columns if col not in column_order]
-    
-    df = df[available_cols + other_cols]
+    df = df[available_cols]
     
     # Generate output filename
     if output_file is None:
@@ -78,7 +81,7 @@ def export_jsonl_to_excel(jsonl_file: str, output_file: str = None) -> str:
         output_file = f"crawl_results_{timestamp}.xlsx"
     
     # Export to Excel with formatting
-    print(f"📝 Exporting to {output_file}...")
+    print(f"💾 Exporting to {output_file}...")
     
     with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
         df.to_excel(writer, sheet_name='Results', index=False)
@@ -114,23 +117,20 @@ def export_jsonl_to_excel(jsonl_file: str, output_file: str = None) -> str:
         
         # Set column widths
         col_widths = {
-            'A': 35,  # URL
-            'B': 25,  # Company Name
-            'C': 25,  # Email
-            'D': 35,  # Form URL
-            'E': 15,  # Industry
+            'A': 40,  # URL
+            'B': 28,  # Email
+            'C': 40,  # Inquiry Form URL
+            'D': 30,  # Company Name
+            'E': 20,  # Industry
             'F': 12,  # HTTP Status
-            'G': 12,  # Crawl Status
-            'H': 12,  # Company Conf
-            'I': 12,  # Email Conf
-            'J': 12,  # Industry Conf
-            'K': 20,  # Form Method
-            'L': 20,  # Last Crawled
-            'M': 30,  # Error Message
+            'G': 15,  # Robots Allowed
+            'H': 12,  # Crawl Status
+            'I': 35,  # Error Message
         }
         
         for col_letter, width in col_widths.items():
-            worksheet.column_dimensions[col_letter].width = width
+            if col_letter in worksheet.column_dimensions:
+                worksheet.column_dimensions[col_letter].width = width
         
         # Freeze header row
         worksheet.freeze_panes = 'A2'
@@ -146,15 +146,16 @@ def export_jsonl_to_excel(jsonl_file: str, output_file: str = None) -> str:
     
     # Statistics
     successful = len(df[df['crawlStatus'] == 'success'])
-    emails_found = len(df[df['email'].notna()])
-    forms_found = len(df[df['inquiryFormUrl'].notna()])
-    company_names = len(df[df['companyName'].notna()])
+    emails_found = len(df[df['email'].notna()]) if 'email' in df.columns else 0
+    forms_found = len(df[df['inquiryFormUrl'].notna()]) if 'inquiryFormUrl' in df.columns else 0
+    company_names = len(df[df['companyName'].notna()]) if 'companyName' in df.columns else 0
     
     print(f"\nData Statistics:")
     print(f"  Successful crawls: {successful}/{len(df)} ({successful/len(df)*100:.1f}%)")
-    print(f"  Emails found: {emails_found} ({emails_found/successful*100:.1f}% of successful)")
-    print(f"  Forms found: {forms_found} ({forms_found/successful*100:.1f}% of successful)")
-    print(f"  Company names: {company_names} ({company_names/successful*100:.1f}% of successful)")
+    if successful > 0:
+        print(f"  Emails found: {emails_found} ({emails_found/successful*100:.1f}% of successful)")
+        print(f"  Forms found: {forms_found} ({forms_found/successful*100:.1f}% of successful)")
+        print(f"  Company names: {company_names} ({company_names/successful*100:.1f}% of successful)")
     
     print("=" * 70 + "\n")
     
@@ -184,6 +185,22 @@ def export_csv(jsonl_file: str, output_file: str = None) -> str:
         return None
     
     df = pd.DataFrame(records)
+    
+    # Only include essential columns
+    column_order = [
+        'url',
+        'email',
+        'inquiryFormUrl',
+        'companyName',
+        'industry',
+        'httpStatus',
+        'robotsAllowed',
+        'crawlStatus',
+        'errorMessage'
+    ]
+    
+    available_cols = [col for col in column_order if col in df.columns]
+    df = df[available_cols]
     
     if output_file is None:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')

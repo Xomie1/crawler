@@ -144,48 +144,37 @@ class CrawlerEngine:
             parser = HTMLParser(final_url_to_use)
             
             # ==================== EMAIL EXTRACTION ====================
-            if self.use_ai_extraction and self.hybrid_extractor:
-                logger.info("Using AI-enhanced email extraction...")
-                
-                # Get rule-based result first (unless AI-only mode)
-                email_result = None
-                if not self.ai_always:
-                    email_extractor = EmailExtractor(
-                        base_url=final_url_to_use, 
-                        use_playwright=self.use_playwright
-                    )
-                    email_result = email_extractor.extract(content, final_url=final_url_to_use)
-                    email_extractor.close()
-                
-                # Use hybrid extractor
-                hybrid_email = self.hybrid_extractor.extract_email(
-                    final_url_to_use,
-                    content,
-                    rule_based_result=email_result
-                )
-                
-                result.email = hybrid_email['value']
-                result.email_confidence = hybrid_email['confidence']
-                result.email_used_ai = hybrid_email['used_ai']
-                
-                if result.email:
-                    logger.info(f"Found email: {result.email} (AI: {result.email_used_ai}, confidence: {result.email_confidence:.2f})")
-            else:
-                # Pure rule-based mode
+            logger.info("="*70)
+            logger.info("📧 EMAIL EXTRACTION")
+            logger.info("="*70)
+
+            try:
                 email_extractor = EmailExtractor(
                     base_url=final_url_to_use, 
                     use_playwright=self.use_playwright
                 )
                 email_result = email_extractor.extract(content, final_url=final_url_to_use)
                 
-                if email_result.get('email'):
+                if email_result and email_result.get('email'):
                     result.email = email_result['email']
                     result.email_confidence = email_result.get('confidence', 0.0)
                     result.email_used_ai = False
-                    logger.info(f"Found email: {result.email}")
+                    logger.info(f"✅ Found email: {result.email} (confidence: {result.email_confidence:.2f})")
+                    logger.info(f"   Method: {email_result['candidates'][0]['detection_method'] if email_result.get('candidates') else 'unknown'}")
+                else:
+                    logger.warning(f"❌ No email extracted")
+                    result.email = None
+                    result.email_confidence = 0.0
                 
                 email_extractor.close()
-            
+
+            except Exception as e:
+                logger.error(f"Email extraction error: {e}")
+                import traceback
+                traceback.print_exc()
+                result.email = None
+                result.email_confidence = 0.0
+                
             # ==================== FORM DETECTION ====================
             form_detection_method = None
 
@@ -311,40 +300,98 @@ class CrawlerEngine:
                 traceback.print_exc()
                 result.error_message = f"Company extraction error: {str(e)}"
                 result.crawl_status = "error" 
+
+
+                
             # ==================== INDUSTRY EXTRACTION ====================
-            if self.use_ai_extraction and self.hybrid_extractor:
-                logger.info("Using AI-enhanced industry extraction...")
-                
-                # Get rule-based result first (unless AI-only mode)
-                rule_based_industry = None
-                if not self.ai_always:
-                    metadata = parser.extract_metadata(content)
-                    rule_based_industry = metadata.get('industry')
-                
-                hybrid_industry = self.hybrid_extractor.extract_industry(
-                    final_url_to_use,
-                    content,
-                    rule_based_result=rule_based_industry
-                )
-                
-                result.industry = hybrid_industry['value']
-                result.industry_confidence = hybrid_industry['confidence']
-                result.industry_used_ai = hybrid_industry['used_ai']
-                
-                if result.industry:
-                    logger.info(
-                        f"Found industry: {result.industry} "
-                        f"(AI: {result.industry_used_ai}, confidence: {result.industry_confidence:.2f})"
+            logger.info("="*70)
+            logger.info("🏭 INDUSTRY EXTRACTION")
+            logger.info("="*70)
+
+            industry_result = None
+            industry_confidence = 0.0
+            industry_used_ai = False
+
+            try:
+                if self.use_ai_extraction and self.hybrid_extractor:
+                    logger.info("Using AI-enhanced industry extraction...")
+                    
+                    # Get rule-based result first (unless AI-only mode)
+                    rule_based_industry = None
+                    if not self.ai_always:
+                        # Use the industry extractor with fallback enabled
+                        from crawler.extractors.industry_extractor import IndustryExtractor
+                        industry_extractor = IndustryExtractor(
+                            base_url=final_url_to_use,
+                            use_fallback=False  # Don't use fallback yet - let AI try first
+                        )
+                        industry_extraction = industry_extractor.extract(content, final_url=final_url_to_use)
+                        rule_based_industry = industry_extraction.get('industry')
+                        logger.info(f"Rule-based industry: {rule_based_industry}")
+                    
+                    # Try AI extraction
+                    try:
+                        hybrid_industry = self.hybrid_extractor.extract_industry(
+                            final_url_to_use,
+                            content,
+                            rule_based_result=rule_based_industry
+                        )
+                        
+                        industry_result = hybrid_industry['value']
+                        industry_confidence = hybrid_industry['confidence']
+                        industry_used_ai = hybrid_industry['used_ai']
+                        
+                        if industry_result:
+                            logger.info(
+                                f"✓ Found industry: {industry_result} "
+                                f"(AI: {industry_used_ai}, confidence: {industry_confidence:.2f})"
+                            )
+                    except Exception as ai_error:
+                        logger.warning(f"AI industry extraction failed: {ai_error}")
+                        # Fallback to rule-based if available
+                        if rule_based_industry:
+                            industry_result = rule_based_industry
+                            industry_confidence = 0.65
+                            industry_used_ai = False
+                            logger.info(f"Using rule-based fallback: {industry_result}")
+                else:
+                    # Pure rule-based mode
+                    from crawler.extractors.industry_extractor import IndustryExtractor
+                    industry_extractor = IndustryExtractor(
+                        base_url=final_url_to_use,
+                        use_fallback=False  # Don't use fallback yet
                     )
-            else:
-                # Pure rule-based mode
-                metadata = parser.extract_metadata(content)
-                if metadata.get('industry'):
-                    result.industry = metadata['industry']
-                    result.industry_confidence = 0.65
-                    result.industry_used_ai = False
-                    logger.info(f"Found industry: {result.industry}")
-            
+                    industry_extraction = industry_extractor.extract(content, final_url=final_url_to_use)
+                    industry_result = industry_extraction.get('industry')
+                    industry_confidence = industry_extraction.get('industry_confidence', 0.65)
+                    industry_used_ai = False
+                    
+                    if industry_result:
+                        logger.info(f"Found industry: {industry_result}")
+                
+                # FINAL FALLBACK: If still no industry, use "その他サービス"
+                if not industry_result:
+                    from crawler.extractors.industry_extractor import IndustryExtractor
+                    industry_result = IndustryExtractor.DEFAULT_INDUSTRY  # "その他サービス"
+                    industry_confidence = IndustryExtractor.DEFAULT_CONFIDENCE  # 0.3
+                    logger.info(f"⚠️ No industry found - using fallback: {industry_result}")
+                
+                # Set result
+                result.industry = industry_result
+                result.industry_confidence = industry_confidence
+                result.industry_used_ai = industry_used_ai
+                
+            except Exception as e:
+                logger.error(f"Industry extraction error: {e}")
+                import traceback
+                traceback.print_exc()
+                # Use fallback even on error
+                from crawler.extractors.industry_extractor import IndustryExtractor
+                result.industry = IndustryExtractor.DEFAULT_INDUSTRY
+                result.industry_confidence = IndustryExtractor.DEFAULT_CONFIDENCE
+                result.industry_used_ai = False
+                logger.info(f"⚠️ Error in extraction - using fallback: {result.industry}")
+
             # Track which fields used AI
             ai_fields = []
             if result.email_used_ai:
