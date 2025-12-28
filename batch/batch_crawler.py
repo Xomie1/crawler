@@ -41,19 +41,7 @@ def load_dotenv():
 load_dotenv()
 # ========================================================
 
-# Optional Google Sheets export
-try:
-    from google_sheets_export import GoogleSheetsExporter
-    GOOGLE_SHEETS_AVAILABLE = True
-except ImportError:
-    GOOGLE_SHEETS_AVAILABLE = False
 
-# Google Apps Script integration
-try:
-    from google_apps_script_integration import GoogleAppsScriptIntegration
-    GOOGLE_APPS_SCRIPT_AVAILABLE = True
-except ImportError:
-    GOOGLE_APPS_SCRIPT_AVAILABLE = False
 
 # Setup logging
 logger = setup_logger(name="batch_crawler", level=logging.INFO)
@@ -365,9 +353,22 @@ class BatchCrawler:
 
 
 def load_urls_from_excel(file_path: str, url_column: str = None, limit: int = None) -> tuple:
-    """Load URLs from Excel file."""
+    """Load URLs from Excel or CSV file."""
     try:
-        df = pd.read_excel(file_path)
+        # Detect file type and load accordingly
+        file_extension = Path(file_path).suffix.lower()
+        
+        if file_extension == '.csv':
+            logger.info(f"Loading CSV file: {file_path}")
+            df = pd.read_csv(file_path, encoding='utf-8-sig')  # utf-8-sig handles BOM
+        elif file_extension in ['.xlsx', '.xls']:
+            logger.info(f"Loading Excel file: {file_path}")
+            df = pd.read_excel(file_path)
+        else:
+            logger.error(f"Unsupported file format: {file_extension}. Use .csv, .xlsx, or .xls")
+            return [], []
+        
+        logger.info(f"Loaded {len(df)} rows from file")
         
         # Auto-detect URL column
         if url_column is None:
@@ -395,15 +396,17 @@ def load_urls_from_excel(file_path: str, url_column: str = None, limit: int = No
         # Try to get company names
         company_names = []
         company_col = None
-        for col in ['法人名', 'Company', 'companyName', 'company_name']:
+        for col in ['法人名', 'Company', 'companyName', 'company_name', '会社名', '企業名']:
             if col in df.columns:
                 company_col = col
                 break
         
         if company_col:
+            logger.info(f"Using company name column: {company_col}")
             company_names = df[company_col].astype(str).tolist()
             company_names = [name if name != 'nan' else None for name in company_names]
         else:
+            logger.info("No company name column found")
             company_names = [None] * len(urls)
         
         # Filter and clean URLs
@@ -421,13 +424,14 @@ def load_urls_from_excel(file_path: str, url_column: str = None, limit: int = No
             filtered_urls = filtered_urls[:limit]
             filtered_names = filtered_names[:limit]
         
-        logger.info(f"Loaded {len(filtered_urls)} URLs from {file_path}")
+        logger.info(f"Loaded {len(filtered_urls)} valid URLs from {file_path}")
         return filtered_urls, filtered_names
         
     except Exception as e:
         logger.error(f"Failed to load URLs from {file_path}: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         return [], []
-
 
 def main():
     """Main batch crawler."""

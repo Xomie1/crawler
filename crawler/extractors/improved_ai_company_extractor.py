@@ -2,7 +2,7 @@
 FINAL FIX: AI Company Name Extraction
 - Auto-completes missing legal entity by searching HTML
 - Validates and fixes AI responses that are missing legal entities
-- Last resort: prepends 株式会社 if name looks valid
+- Returns the value even if legal entity can't be found (with lower confidence)
 """
 
 import re
@@ -59,25 +59,43 @@ class ImprovedAICompanyExtractor:
             logger.info(f"✅ AI completed: {ai_response['value']}")
             return ai_response
         
-        # Fallback to rule-based
+        # AI failed - check if we should use rule-based fallback
         if rule_based_result and rule_based_result.get('company_name'):
-            # Normalize legal entity in fallback rule-based result
-            rb_val = rule_based_result['company_name'].replace('有限会社', '株式会社')
-            logger.info(f"↩️ Fallback to rule-based: {rb_val}")
-            return {
-                'value': rb_val,
-                'confidence': rule_based_result.get('company_name_confidence', 0.5),
-                'source': rule_based_result.get('company_name_source', 'rule_based'),
-                'method': rule_based_result.get('company_name_method'),
-                'used_ai': False
-            }
+            rb_val = rule_based_result['company_name']
+            
+            # Check if rule-based already has legal entity
+            has_legal_entity = any(entity in rb_val for entity in self.LEGAL_ENTITIES)
+            
+            if has_legal_entity:
+                # Rule-based has legal entity, use it
+                rb_val = rb_val.replace('有限会社', '株式会社')
+                logger.info(f"↩️ Fallback to rule-based (has legal entity): {rb_val}")
+                return {
+                    'value': rb_val,
+                    'confidence': rule_based_result.get('company_name_confidence', 0.5),
+                    'source': rule_based_result.get('company_name_source', 'rule_based'),
+                    'method': rule_based_result.get('company_name_method'),
+                    'used_ai': False
+                }
+            else:
+                # Rule-based doesn't have legal entity either - use it with lower confidence
+                logger.warning(f"⚠️ Using rule-based without legal entity: {rb_val}")
+                return {
+                    'value': rb_val,
+                    'confidence': min(rule_based_result.get('company_name_confidence', 0.5), 0.7),
+                    'source': rule_based_result.get('company_name_source', 'rule_based'),
+                    'method': rule_based_result.get('company_name_method'),
+                    'used_ai': False
+                }
         
+        # Complete failure - return None
+        logger.error("❌ Could not extract company name")
         return {
             'value': None,
             'confidence': 0.0,
             'source': 'not_found',
             'method': None,
-            'used_ai': False
+            'used_ai': True  # Tried AI but failed
         }
     
     def _call_ai_with_autocomplete(
@@ -123,20 +141,22 @@ class ImprovedAICompanyExtractor:
                 logger.info(f"AI result complete: {ai_value}")
                 return parsed
             
-            # MISSING LEGAL ENTITY - AUTO-COMPLETE IT
+            # MISSING LEGAL ENTITY - TRY TO AUTO-COMPLETE IT
             logger.warning(f"⚠️ AI missing legal entity: {ai_value}")
-            logger.info("🔧 Auto-completing legal entity...")
+            logger.info("🔧 Attempting auto-complete...")
             
             completed = self._auto_complete_legal_entity(ai_value, html_content)
             
             if completed:
-                logger.info(f"✅ Completed: {completed}")
+                logger.info(f"✅ Auto-completed: {completed}")
                 parsed['value'] = completed
-                parsed['confidence'] = min(parsed.get('confidence', 0.8), 0.85)  # Slightly lower confidence
+                parsed['confidence'] = min(parsed.get('confidence', 0.8), 0.85)
                 return parsed
             else:
-                logger.error(f"❌ Could not auto-complete: {ai_value}")
-                return None
+                # FIXED: Return original value even if can't auto-complete
+                logger.warning(f"⚠️ Could not auto-complete, returning original: {ai_value}")
+                parsed['confidence'] = min(parsed.get('confidence', 0.8), 0.70)  # Lower confidence
+                return parsed
         
         except Exception as e:
             logger.error(f"AI call failed: {e}")
@@ -146,9 +166,13 @@ class ImprovedAICompanyExtractor:
     
     def _auto_complete_legal_entity(self, company_name: str, html_content: str) -> Optional[str]:
         """
-        Auto-complete missing legal entity by:
-        1. Searching HTML for legal entity + company name pattern
-        2. If not found, prepend 株式会社 (most common)
+        Auto-complete missing legal entity by searching HTML.
+        
+        Strategy:
+        1. Search HTML for legal entity + company name pattern
+        2. Analyze frequency of legal entities in HTML
+        3. Search for company name with entity in nearby context
+        4. Return None if cannot determine (caller will return original value)
         """
         
         # STRATEGY 1: Search HTML for legal entity + this name
@@ -182,12 +206,78 @@ class ImprovedAICompanyExtractor:
         except Exception as e:
             logger.error(f"Error searching HTML: {e}")
         
-        # STRATEGY 2: Prepend 株式会社 (most common)
-        logger.info("Strategy 2: Prepending 株式会社 (most common)")
-        result = '株式会社' + company_name
-        logger.info(f"  Default: {result}")
-        return result
-    
+        # STRATEGY 2: Count occurrences of each legal entity in HTML
+        logger.info("Strategy 2: Analyzing legal entity frequency in HTML...")
+        
+        try:
+            entity_counts = {}
+            for entity in self.LEGAL_ENTITIES:
+                count = text.lower().count(entity)
+                if count > 0:
+                    entity_counts[entity] = count
+            
+            if entity_counts:
+                # Get most common entity
+                most_common_entity = max(entity_counts, key=entity_counts.get)
+                most_common_count = entity_counts[most_common_entity]
+                
+                logger.info(f"  Legal entity counts: {entity_counts}")
+                logger.info(f"  Most common: {most_common_entity} ({most_common_count} occurrences)")
+                
+                # Only use if it appears at least 2 times (not a fluke)
+                if most_common_count >= 2:
+                    result = most_common_entity + company_name
+                    # Normalize
+                    result = result.replace('有限会社', '株式会社')
+                    logger.info(f"  ✅ Using most frequent entity: {result}")
+                    return result
+                else:
+                    logger.warning(f"  ⚠️ Entity only appears {most_common_count} time(s) - not confident")
+            else:
+                logger.warning("  ⚠️ No legal entities found in HTML")
+        
+        except Exception as e:
+            logger.error(f"Error analyzing entity frequency: {e}")
+        
+        # STRATEGY 3: Check if company name already appears with an entity elsewhere
+        logger.info("Strategy 3: Broad search for company name with any entity...")
+        
+        try:
+            # Look for company name with any entity nearby (within 50 chars)
+            name_lower = company_name.lower()
+            text_lower = text.lower()
+            
+            # Find all positions where company name appears
+            pos = 0
+            while True:
+                pos = text_lower.find(name_lower, pos)
+                if pos == -1:
+                    break
+                
+                # Check 50 chars before and after
+                context_start = max(0, pos - 50)
+                context_end = min(len(text), pos + len(company_name) + 50)
+                context = text[context_start:context_end]
+                
+                # Check if any entity appears in context
+                for entity in self.LEGAL_ENTITIES:
+                    if entity in context:
+                        result = entity + company_name
+                        # Normalize
+                        result = result.replace('有限会社', '株式会社')
+                        logger.info(f"  ✅ Found in context: {result}")
+                        return result
+                
+                pos += 1
+        
+        except Exception as e:
+            logger.error(f"Error in broad search: {e}")
+        
+        # Could not determine legal entity - return None
+        # Caller will return the original value with lower confidence
+        logger.warning(f"⚠️ Could not auto-complete legal entity for: {company_name}")
+        return None
+
     def _build_improved_prompt(
         self,
         url: str,
@@ -213,12 +303,12 @@ CRITICAL RULES:
 
 4. Keep under 30 characters
 
-5. **If you find a company name but can't find the legal entity, return NOT_FOUND**
-   - Don't return partial names
-   - Don't return names without legal entities
+5. **If you can't find a legal entity, return the name anyway**
+   - Better to return partial name than nothing
+   - We will try to complete it automatically
 
 RESPONSE FORMAT:
-company_name: [full name WITH legal entity]
+company_name: [full name, preferably WITH legal entity]
 confidence: [0.0-1.0]
 source: [location]
 """
@@ -229,7 +319,7 @@ source: [location]
             if rb_value:
                 rb_hint = f"\nRule-based found: '{rb_value}'\n(Verify this)"
         
-        user_prompt = f"""Extract the COMPLETE company name (must include legal entity).
+        user_prompt = f"""Extract the company name (preferably with legal entity).
 
 URL: {url}
 {rb_hint}
@@ -237,7 +327,7 @@ URL: {url}
 HTML Content:
 {html_content}
 
-Extract the company name with legal entity:
+Extract the company name:
 """
         
         return [
