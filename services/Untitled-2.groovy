@@ -394,15 +394,6 @@ class EnhancedCompanyNameExtractor:
                     # Normalize encoding
                     alt = self._normalize_encoding(alt)
                     
-                    nav_labels = ['about us', 'about', '案内', 'ガイド', 'guide', 'menu', 'メニュー',
-                         'home', 'ホーム', 'top', 'トップ', 'back', '戻る', 'logo', 'ロゴ']
-                    
-                    if any(label in alt.lower() for label in nav_labels):
-                        continue
-                    
-                    # Skip if it's just "About Us" or "事務所案内" without actual company name
-                    if alt in ['About Us', '事務所案内', '会社案内', 'Company', 'Office']:
-                        continue
                     # Skip nav/menu alts
                     if any(kw in alt.lower() for kw in ['menu', 'nav', 'icon', 'button']):
                         continue
@@ -458,17 +449,7 @@ class EnhancedCompanyNameExtractor:
             print(f"      Extracting from title tag: '{title_text[:80]}'...")
             
             # Split on common separators
-            separators = ['|', '｜', ' - ', ' — ', ' ｜ ', '|', ' | ', '～']
-            
-            # NEW: Common page descriptors that get appended to company names
-            page_descriptors = [
-                '会社案内', '会社概要', '企業情報', '企業概要', 
-                'について', 'のご案内', 'のご紹介', '紹介',
-                'トップ', 'ホーム', 'HOME', 'TOP',
-                'Company', 'About', 'Overview', 'Profile'
-            ]
-            
-            candidates = []
+            separators = ['|', '｜', ' - ', ' – ', ' ｜ ', '|', ' | ', '～']
             
             for separator in separators:
                 if separator not in title_text:
@@ -482,7 +463,7 @@ class EnhancedCompanyNameExtractor:
                         continue
                     
                     # Skip SEO stuffing (keywords, descriptions)
-                    seo_keywords = ['ご相談', 'サービス', 'news', 'blog', 'サイト']
+                    seo_keywords = ['ご相談', 'サービス', 'news', 'blog', 'について', 'のご案内', 'サイト']
                     if any(kw in part for kw in seo_keywords):
                         continue
                     
@@ -493,66 +474,19 @@ class EnhancedCompanyNameExtractor:
                     
                     if self._is_valid(cleaned) and not self._is_garbage(cleaned):
                         has_legal = any(e in cleaned for e in self.LEGAL_ENTITIES)
-                        
-                        # NEW: Check if this part has page descriptors appended
-                        has_descriptor = any(desc in cleaned for desc in page_descriptors)
-                        
                         confidence = 0.88 if has_legal else 0.84
                         
-                        candidates.append({
-                            'value': cleaned,
-                            'has_legal': has_legal,
-                            'has_descriptor': has_descriptor,
-                            'confidence': confidence
-                        })
-            
-            # NEW: Smart selection - prefer clean company names without descriptors
-            if candidates:
-                # If we have multiple candidates, prefer ones without descriptors
-                clean_candidates = [c for c in candidates if not c['has_descriptor'] and c['has_legal']]
-                
-                if clean_candidates:
-                    # Use the shortest clean candidate with legal entity
-                    best = min(clean_candidates, key=lambda x: len(x['value']))
-                else:
-                    # Fallback: try to strip descriptors from candidates
-                    for candidate in candidates:
-                        original = candidate['value']
-                        cleaned = original
-                        
-                        for descriptor in page_descriptors:
-                            # Remove descriptor from end
-                            if cleaned.endswith(descriptor):
-                                cleaned = cleaned[:-len(descriptor)].strip()
-                            # Remove descriptor from beginning (less common)
-                            if cleaned.startswith(descriptor):
-                                cleaned = cleaned[len(descriptor):].strip()
-                        
-                        # If we successfully stripped a descriptor, re-validate
-                        if cleaned != original and self._is_valid(cleaned):
-                            candidate['value'] = cleaned
-                            candidate['has_descriptor'] = False
-                            candidate['confidence'] = 0.90 if candidate['has_legal'] else 0.86
-                    
-                    # Now select best candidate (prefer those without descriptors)
-                    candidates.sort(key=lambda x: (
-                        x['has_descriptor'],  # False sorts before True
-                        -x['has_legal'],      # True (1) sorts before False (0)
-                        -x['confidence'],
-                        len(x['value'])       # Shorter is better
-                    ))
-                    
-                    best = candidates[0]
-                
-                results.append(CompanyNameCandidate(
-                    best['value'], 'title_tag', best['confidence'], 'title', best['has_legal']
-                ))
-                print(f"      ✓ [TITLE] {best['value']} (conf: {best['confidence']:.2f})")
+                        results.append(CompanyNameCandidate(
+                            cleaned, 'title_tag', confidence, 'title', has_legal
+                        ))
+                        print(f"      ✓ [TITLE] {cleaned} (conf: {confidence:.2f})")
+                        return results  # Return first valid match
         
         except Exception as e:
             logger.debug(f"Title tag extraction error: {e}")
         
         return results
+
 
     def _extract_semantic_label_value_pairs(self, html_content: str) -> List[CompanyNameCandidate]:
         """
@@ -568,15 +502,6 @@ class EnhancedCompanyNameExtractor:
         results = []
         seen = set()
         
-        nav_patterns = [
-            r'^▲.*?へ$',      # ▲Page Topへ, ▲トップへ
-            r'^→.*',          # →アクセス, →詳細
-            r'.*メニュー$',    # サイトメニュー
-            r'.*一覧$',        # カテゴリ一覧
-            r'^Page\s+Top',    # Page Top
-            r'^このページの.*',  # このページの先頭へ
-        ]
-
         try:
             soup = BeautifulSoup(html_content, 'html.parser')
             
@@ -630,14 +555,6 @@ class EnhancedCompanyNameExtractor:
                         # Company names are typically 5-50 chars
                         if len(text) > 100:
                             print(f"          Skipping long text ({len(text)} chars) - likely paragraph")
-                            current = current.next_sibling
-                            siblings_checked += 1
-                            continue
-
-                        # CRITICAL: Reject navigation patterns
-                        is_nav = any(re.match(pattern, text) for pattern in nav_patterns)
-                        if is_nav:
-                            print(f"          Skipping navigation: '{text}'")
                             current = current.next_sibling
                             siblings_checked += 1
                             continue
@@ -780,17 +697,14 @@ class EnhancedCompanyNameExtractor:
                     if self._looks_like_date(value):
                         continue
                     
-                    # FIX: Explicitly reject navigation/menu concatenations
-                    nav_indicators = ['選び方', 'Q&A', '生産終了品', 'ガイド', 'メニュー']
-                    nav_count = sum(1 for indicator in nav_indicators if indicator in value)
-                    if nav_count >= 2:
-                        print(f"        ✗ [NAVIGATION TEXT] {value}")
-                        continue
-                    
-                    # Rest of validation continues...
+            # FIXED: Handle multi-line company names that are too long for validation
+                    # Instead of strictly rejecting >30 chars, check if it's a valid company name first
                     if len(value) > 100:
+                        # Likely a paragraph, not a company name
                         continue
                     
+                    # For values 30-100 chars: could be multi-line company names with legal entity
+                    # Only accept if it contains legal entity or professional designation
                     if len(value) > 30:
                         has_designation = any(d in value for d in [
                             '行政書士', '弁護士', '税理士', '社会保険労務士',
@@ -956,22 +870,6 @@ class EnhancedCompanyNameExtractor:
         if self._is_form_field(name) or not name:
             return False
         
-        nav_patterns = [
-            r'Q&A',  # FAQ indicators
-            r'選び方.*Q&A',  # Selection guide + Q&A
-            r'生産終了品',  # Discontinued products
-            r'.*の選び方.*Q&A.*',  # Pattern with selection guide and Q&A
-        ]
-        
-        for pattern in nav_patterns:
-            if re.search(pattern, name):
-                return False
-
-        menu_keywords = ['選び方', 'Q&A', '生産終了', 'ガイド', '一覧', 'メニュー']
-        keyword_count = sum(1 for kw in menu_keywords if kw in name)
-        if keyword_count >= 2:  # Multiple menu keywords = navigation text
-            return False
-
         if any(npo_marker in name for npo_marker in ['特定非営利活動法人', '一般社団法人', '一般財団法人']):
             max_length = 80  # NPOs/associations can be longer
         else:
@@ -1103,38 +1001,6 @@ class EnhancedCompanyNameExtractor:
             for idx, h1 in enumerate(h1_tags):
                 text = self._clean(h1.get_text(strip=True))
                 print(f"    h1[{idx}]: '{text[:80]}'...")
-                
-                # === ADD THIS ENTIRE BLOCK BEFORE LEGAL ENTITY CHECK ===
-                # STRATEGY 1: Check for pipe separator (page title | company name)
-                # Common pattern: "事務所概要｜有村探偵事務所" or "About Us | Company Name"
-                pipe_separators = ['｜', '|', ' | ', ' ｜ ']
-                for separator in pipe_separators:
-                    if separator in text:
-                        parts = text.split(separator)
-                        print(f"      → Found pipe separator, parts: {parts}")
-                        
-                        # Check each part to see which one is the company name
-                        for part in parts:
-                            part = part.strip()
-                            
-                            # Skip obvious page titles
-                            page_title_keywords = ['概要', '案内', 'について', 'とは', 'overview', 'about', 'info']
-                            if any(kw in part.lower() for kw in page_title_keywords):
-                                continue
-                            
-                            # Prefer parts with legal entities or professional designations
-                            has_legal = any(e in part for e in self.LEGAL_ENTITIES)
-                            has_professional = any(d in part for d in ['行政書士', '弁護士', '司法書士', '税理士'])
-                            has_business_type = any(b in part for b in ['探偵事務所', '調査事務所', 'オフィス', '事務所'])
-                            
-                            if has_legal or has_professional or has_business_type:
-                                if self._is_valid(part) and not self._is_garbage(part):
-                                    confidence = 0.94 if has_legal else 0.91
-                                    results.append(CompanyNameCandidate(
-                                        part, 'h1_pipe_split', confidence, 'h1_smart_split', has_legal
-                                    ))
-                                    print(f"      ✓ [H1 PIPE SPLIT] '{part}' (conf: {confidence:.2f})")
-                                    return results
                 
                 # Check if text starts with a legal entity
                 for entity in self.LEGAL_ENTITIES:
@@ -1479,22 +1345,17 @@ class EnhancedCompanyNameExtractor:
                     
                     if isinstance(data, dict) and 'organization' in data.get('@type', '').lower():
                         name = data.get('name', '').strip()
-                        # FIX: Remove trailing special characters like ‣, ›, •, etc.
-                        name = re.sub(r'[\u2023\u203a\u2022\u25b8\u25b9\u25ba\s]+$', '', name).strip()
-                        
                         if name and self._is_valid(name):
                             return CompanyNameCandidate(name, 'json_ld', 0.96, 'json_ld', 
                                                     any(e in name for e in self.LEGAL_ENTITIES))
                 except (json.JSONDecodeError, TypeError):
                     pass
             
-            for attr, conf in [('og:site_name', 0.95), ('og:title', 0.90)]:
+            for attr, conf in [('og:site_name', 0.90), ('og:title', 0.88)]:
                 tag = soup.find('meta', property=attr) or soup.find('meta', attrs={'name': attr})
                 if tag:
                     for part in re.split(r'[|｜/\-]', tag.get('content', '')):
                         part = part.strip()
-                        # FIX: Remove trailing special characters
-                        part = re.sub(r'[\u2023\u203a\u2022\u25b8\u25b9\u25ba\s]+$', '', part).strip()
                         
                         if any(seo in part for seo in ['ご相談', 'お問い合わせ', 'ください', '選び']):
                             continue
@@ -1510,7 +1371,7 @@ class EnhancedCompanyNameExtractor:
             logger.debug(f"Structured data error: {e}")
         
         return None
-    
+
     def _extract_black_square_markers(self, html_content: str) -> List[CompanyNameCandidate]:
         """NEW: Extract company names from ■ (BLACK SQUARE) marker format
         
@@ -2027,12 +1888,11 @@ class EnhancedCompanyNameExtractor:
                         
                         print(f"        Found {len(dts_raw)} <dt> and {len(dds_raw)} <dd> elements")
                         
-                        # === REPLACE THE BROKEN WHILE LOOP WITH THIS ===
-                        # Match DTs with DDs by position
-                        for i in range(min(len(dts_raw), len(dds_raw))):
-                            # Clean HTML tags from raw text
-                            label_raw = re.sub(r'<[^>]+>', '', dts_raw[i])
-                            value_raw = re.sub(r'<[^>]+>', '', dds_raw[i])
+                        i = 0
+                        while i < len(all_children):
+                            if all_children[i].name == 'dt' and i + 1 < len(all_children) and all_children[i + 1].name == 'dd':
+                                label_raw = all_children[i].get_text(strip=True)
+                                value_raw = all_children[i + 1].get_text(strip=True)
                             
                             label = self._normalize_encoding(label_raw)
                             value = self._normalize_encoding(value_raw)
@@ -2137,8 +1997,7 @@ class EnhancedCompanyNameExtractor:
         
         best = sorted(list(seen.values()), 
                  key=lambda x: (
-                     -3 if x.method in ['dl_field', 'table_field', 'black_square'] else 0,
-                     -2 if x.method == 'title' and x.confidence >= 0.88 else 0,  # Prioritize high-conf titles
+                     -2 if x.method in ['dl_field', 'table_field', 'black_square'] else 0,
                      -1 if x.method == 'business_name' else 0,
                      -x.has_legal_entity,
                      -x.confidence,

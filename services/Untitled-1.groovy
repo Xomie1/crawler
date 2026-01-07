@@ -103,26 +103,6 @@ class EnhancedCompanyNameExtractor:
             print(f"  ↓ Using immediately (confidence: {best.confidence:.2f})")
             return self._format_result(best)
         
-        # PHASE 1.5: Semantic Label-Value Pairs (NEW) - INSERTED HERE
-        print("\nPHASE 1.5: Semantic Label-Value Pairs (NEW)")
-        semantic_candidates = self._extract_semantic_label_value_pairs(html_content)
-        candidates.extend(semantic_candidates)
-
-        if semantic_candidates and any(c.confidence >= 0.93 for c in semantic_candidates):
-            best = max(semantic_candidates, key=lambda x: x.confidence)
-            print(f"  ✓ Found high-quality semantic match: {best.value}")
-            print(f"  ↓ Using immediately (confidence: {best.confidence:.2f})")
-            return self._format_result(best)
-
-        print("\nPHASE 1.6: Title Tag Extraction (NEW)")
-        title_candidates = self._extract_from_title_tag(html_content)
-        candidates.extend(title_candidates)
-
-        if title_candidates and any(c.confidence >= 0.85 for c in title_candidates):
-            best = max(title_candidates, key=lambda x: x.confidence)
-            print(f"  ✓ Found title match: {best.value}")
-            return self._format_result(best)
-
         # PHASE 2: Fetch Other Company Info Pages
         if self.fetcher:
             print("\nPHASE 2: Other Company Info Pages")
@@ -141,26 +121,6 @@ class EnhancedCompanyNameExtractor:
                 print(f"  ↓ Using immediately (confidence: {best_marker.confidence:.2f})")
                 return self._format_result(best_marker)
         
-        # New Phase 3.5 in extract() method:
-        print("\nPHASE 3.5: Footer/Header Extraction (NEW)")
-        footer_candidates = self._extract_footer_company_names(html_content)
-        candidates.extend(footer_candidates)
-        # In PHASE 3.5 or 3.6, or as fallback in _extract_homepage():
-        header_results = self._extract_header_alt_text(html_content)
-        candidates.extend(header_results)
-
-        if footer_candidates and any(c.confidence >= 0.92 for c in footer_candidates):
-            best = max(footer_candidates, key=lambda x: x.confidence)
-            return self._format_result(best)
-        
-        # New Phase 3.6 in extract() method:
-        print("\nPHASE 3.6: Explicit Page Labels (NEW)")
-        label_candidates = self._extract_from_page_labels(html_content)
-        candidates.extend(label_candidates)
-
-        if label_candidates and any(c.confidence >= 0.93 for c in label_candidates):
-            return self._format_result(max(label_candidates, key=lambda x: x.confidence))
-
         # PHASE 4: Homepage Fallbacks (h1, title, copyright)
         print("\nPHASE 4: Homepage Fallbacks")
         home_candidates = self._extract_homepage(html_content)
@@ -170,672 +130,10 @@ class EnhancedCompanyNameExtractor:
         print("\nPHASE 5: Title Introduction Pattern (Last Resort)")
         intro_candidates = self._extract_title_introduction_pattern(html_content)
         candidates.extend(intro_candidates)
-
-        # PHASE 1.5: Semantic Label-Value Pairs (NEW) - INSERTED HERE
-        print("\nPHASE 1.5: Semantic Label-Value Pairs (NEW)")
-        semantic_candidates = self._extract_semantic_label_value_pairs(html_content)
-        candidates.extend(semantic_candidates)
-
-        if semantic_candidates and any(c.confidence >= 0.93 for c in semantic_candidates):
-            best = max(semantic_candidates, key=lambda x: x.confidence)
-            print(f"  ✓ Found high-quality semantic match: {best.value}")
-            print(f"  ↓ Using immediately (confidence: {best.confidence:.2f})")
-            return self._format_result(best)
-
-        print("\nPHASE 1.6: Title Tag Extraction (NEW)")
-        title_candidates = self._extract_from_title_tag(html_content)
-        candidates.extend(title_candidates)
-
-        if title_candidates and any(c.confidence >= 0.85 for c in title_candidates):
-            best = max(title_candidates, key=lambda x: x.confidence)
-            print(f"  ✓ Found title match: {best.value}")
-            return self._format_result(best)
         
         return self._select_best_candidate(candidates, html_content)
     
-    def _extract_footer_company_names(self, html_content: str) -> List[CompanyNameCandidate]:
-        """NEW: Extract from footer/copyright sections. Fixes issues #2, #8, #10."""
-        results = []
-        seen = set()
-        
-        try:
-            soup = BeautifulSoup(html_content, 'html.parser')
-            
-            footer = soup.find('footer') or soup.find(id=re.compile(r'footer|copyright', re.I))
-            if not footer:
-                # Last resort: check last 20% of text
-                text = soup.get_text()
-                text = text[int(len(text) * 0.8):]
-            else:
-                text = footer.get_text()
-            
-            print(f"      Scanning footer/copyright section...")
-            
-            # Extract from copyright lines
-            patterns = [
-                r'Copyright\s*(?:\(C\)|©)\s*\d{0,4}\s*(.+?)\s+All Rights Reserved',
-                r'Copyright\s*(?:\(C\)|©)\s*\d{0,4}\s*(.+?)(?:\n|$)',
-                r'([^\n]+?役所)\s*(.+?)(?:\n|$)',
-            ]
-            
-            for pattern in patterns:
-                for match in re.finditer(pattern, text, re.IGNORECASE):
-                    candidate = match.group(1).strip()
-                    candidate = re.sub(r'\s*All Rights Reserved.*$', '', candidate, flags=re.I).strip()
-                    
-                    cleaned = self._clean(candidate)
-                    if cleaned and len(cleaned) >= 5 and cleaned not in seen and self._is_valid(cleaned):
-                        seen.add(cleaned)
-                        has_legal = any(e in cleaned for e in self.LEGAL_ENTITIES)
-                        results.append(CompanyNameCandidate(cleaned, 'footer_copyright', 
-                                     0.94 if has_legal else 0.91, 'footer', has_legal))
-                        print(f"      ✓ [FOOTER COPYRIGHT] {cleaned}")
-            
-            # Extract from img alt text in footer
-            if footer:
-                for img in footer.find_all('img'):
-                    alt = img.get('alt', '').strip()
-                    if alt and len(alt) >= 5:
-                        cleaned = self._clean(alt)
-                        if (any(e in cleaned for e in self.LEGAL_ENTITIES) or 
-                            any(kw in cleaned for kw in ['役場', '割', '事務所', 'オフィス'])):
-                            if cleaned not in seen and self._is_valid(cleaned):
-                                seen.add(cleaned)
-                                has_legal = any(e in cleaned for e in self.LEGAL_ENTITIES)
-                                results.append(CompanyNameCandidate(cleaned, 'footer_img_alt', 0.92, 'footer_img', has_legal))
-                                print(f"      ✓ [FOOTER IMG ALT] {cleaned}")
-        
-        except Exception as e:
-            logger.debug(f"Footer extraction error: {e}")
-        
-        return results
     
-    def _extract_from_page_labels(self, html_content: str) -> List[CompanyNameCandidate]:
-        """NEW: Extract from explicit page labels. Fixes issues #3, #7, #9, #13."""
-        results = []
-        seen = set()
-        
-        try:
-            soup = BeautifulSoup(html_content, 'html.parser')
-            
-            print(f"      Scanning for explicit page labels...")
-            
-            # Find elements containing company labels
-            for element in soup.find_all(string=True):
-                text = element.strip()
-                if not text or not any(label in text for label in self.PRIMARY_LABELS):
-                    continue
-                
-                parent = element.parent
-                if not parent:
-                    continue
-                
-                # Find value in next sibling or next cell
-                candidate = None
-                
-                if element.next_sibling and hasattr(element.next_sibling, 'get_text'):
-                    candidate = element.next_sibling.get_text(strip=True)
-                
-                if not candidate or not self._is_valid(candidate):
-                    next_cell = parent.find_next(['td', 'dd'])
-                    if next_cell:
-                        candidate = next_cell.get_text(strip=True)
-                
-                if not candidate or not self._is_valid(candidate):
-                    tr = parent.find_parent('tr')
-                    if tr:
-                        cells = tr.find_all('td')
-                        if len(cells) >= 2 and parent in cells:
-                            idx = cells.index(parent)
-                            if idx < len(cells) - 1:
-                                candidate = cells[idx + 1].get_text(strip=True)
-                
-                if candidate:
-                    cleaned = self._clean(self._remove_seo(candidate))
-                    if cleaned and len(cleaned) >= 5 and cleaned not in seen and self._is_valid(cleaned):
-                        seen.add(cleaned)
-                        has_legal = any(e in cleaned for e in self.LEGAL_ENTITIES)
-                        results.append(CompanyNameCandidate(cleaned, 'page_label', 0.93, 'explicit_label', has_legal))
-                        print(f"      ✓ [PAGE LABEL] {cleaned}")
-        
-        except Exception as e:
-            logger.debug(f"Page labels extraction error: {e}")
-        
-        return results
-    
-    def _extract_malformed_dl_safe(self, html_content: str) -> List[CompanyNameCandidate]:
-        """NEW: Safe malformed DL extraction. Fixes issues #2, #6, #8, #9, #12, #14."""
-        results = []
-        seen = set()
-        
-        try:
-            soup = BeautifulSoup(html_content, 'html.parser')
-            dls = soup.find_all('dl')
-            
-            if not dls:
-                return results
-            
-            print(f"      Trying malformed DL extraction (safe)...")
-            
-            for dl in dls:
-                # FIXED: Use proper BeautifulSoup navigation instead of undefined all_children
-                dts = dl.find_all('dt', recursive=False)  # Direct children only
-                dds = dl.find_all('dd', recursive=False)  # Direct children only
-                
-                print(f"        Found {len(dts)} <dt> and {len(dds)} <dd> elements")
-                
-                # Match DTs with DDs by position
-                for i, dt in enumerate(dts):
-                    if i >= len(dds):
-                        break
-                    
-                    label = self._normalize_encoding(dt.get_text(strip=True))
-                    value = self._normalize_encoding(dds[i].get_text(strip=True))
-                    
-                    if not (label and value):
-                        continue
-                    
-                    matches, conf_boost = self._label_matches_company_name(label)
-                    
-                    if not matches or self._looks_like_date(value) or not self._is_valid(value):
-                        continue
-                    
-                    cleaned = self._clean(self._remove_seo(value))
-                    
-                    if any(e in cleaned for e in self.LEGAL_ENTITIES):
-                        extracted = self._extract_company_from_mixed_text(cleaned)
-                        if extracted:
-                            cleaned = extracted
-                    
-                    if cleaned and cleaned not in seen and self._is_valid(cleaned):
-                        seen.add(cleaned)
-                        has_legal = any(e in cleaned for e in self.LEGAL_ENTITIES)
-                        conf = 0.98 if has_legal else 0.94 + (conf_boost * 0.04)
-                        results.append(CompanyNameCandidate(cleaned, 'malformed_dl', conf, 'dl_field', has_legal))
-                        print(f"        ✓ [MALFORMED DL] {cleaned} (conf: {conf:.2f})")
-        
-        except Exception as e:
-            logger.error(f"Malformed DL safe extraction error: {e}")
-        
-        return results
-    
-    def _extract_header_alt_text(self, html_content: str) -> List[CompanyNameCandidate]:
-        """NEW: Extract company names from header/footer image alt attributes.
-        
-        Many Japanese sites put company name in logo alt text:
-        <img alt="株式会社ABC" src="logo.png">
-        <img alt="税理士事務所 会社名">
-        """
-        results = []
-        seen = set()
-        
-        try:
-            soup = BeautifulSoup(html_content, 'html.parser')
-            
-            print(f"      Extracting from header/footer img alt text...")
-            
-            # Find header and footer sections
-            sections = []
-            header = soup.find('header') or soup.find(id=re.compile(r'header|logo', re.I))
-            footer = soup.find('footer') or soup.find(id=re.compile(r'footer|copyright', re.I))
-            
-            if header:
-                sections.append(('header', header))
-            if footer:
-                sections.append(('footer', footer))
-            
-            for section_name, section in sections:
-                for img in section.find_all('img'):
-                    alt = img.get('alt', '').strip()
-                    
-                    if not alt or len(alt) < 3:
-                        continue
-                    
-                    # Normalize encoding
-                    alt = self._normalize_encoding(alt)
-                    
-                    nav_labels = ['about us', 'about', '案内', 'ガイド', 'guide', 'menu', 'メニュー',
-                         'home', 'ホーム', 'top', 'トップ', 'back', '戻る', 'logo', 'ロゴ']
-                    
-                    if any(label in alt.lower() for label in nav_labels):
-                        continue
-                    
-                    # Skip if it's just "About Us" or "事務所案内" without actual company name
-                    if alt in ['About Us', '事務所案内', '会社案内', 'Company', 'Office']:
-                        continue
-                    # Skip nav/menu alts
-                    if any(kw in alt.lower() for kw in ['menu', 'nav', 'icon', 'button']):
-                        continue
-                    
-                    # Check if alt contains company name indicators
-                    has_legal = any(e in alt for e in self.LEGAL_ENTITIES)
-                    has_office_type = any(kw in alt for kw in ['事務所', 'オフィス', '会社', '法人'])
-                    
-                    if not (has_legal or has_office_type):
-                        continue
-                    
-                    cleaned = self._clean(alt)
-                    
-                    # Extract just company name if mixed with address
-                    if '〒' in cleaned or '【' in cleaned or '】' in cleaned:
-                        cleaned = cleaned.split('〒')[0].split('【')[0].split('】')[0].strip()
-                    
-                    if cleaned and len(cleaned) >= 5 and len(cleaned) <= 60:
-                        if cleaned not in seen and self._is_valid(cleaned):
-                            seen.add(cleaned)
-                            has_legal = any(e in cleaned for e in self.LEGAL_ENTITIES)
-                            confidence = 0.92 if has_legal else 0.89
-                            
-                            results.append(CompanyNameCandidate(
-                                cleaned, f'{section_name}_img_alt', confidence, 'img_alt', has_legal
-                            ))
-                            print(f"      ✓ [{section_name.upper()} IMG ALT] {cleaned} (conf: {confidence:.2f})")
-        
-        except Exception as e:
-            logger.debug(f"Header/footer img alt extraction error: {e}")
-        
-        return results
-    
-    def _extract_from_title_tag(self, html_content: str) -> List[CompanyNameCandidate]:
-        """NEW: Extract company name from <title> tag.
-        
-        Title often contains company name:
-        <title>株式会社ABC | サービス説明</title>
-        <title>会社名 - 税理士事務所</title>
-        """
-        results = []
-        
-        try:
-            soup = BeautifulSoup(html_content, 'html.parser')
-            title_tag = soup.find('title')
-            
-            if not title_tag:
-                return results
-            
-            title_text = title_tag.get_text(strip=True)
-            # Normalize encoding
-            title_text = self._normalize_encoding(title_text)
-            print(f"      Extracting from title tag: '{title_text[:80]}'...")
-            
-            # Split on common separators
-            separators = ['|', '｜', ' - ', ' — ', ' ｜ ', '|', ' | ', '～']
-            
-            # NEW: Common page descriptors that get appended to company names
-            page_descriptors = [
-                '会社案内', '会社概要', '企業情報', '企業概要', 
-                'について', 'のご案内', 'のご紹介', '紹介',
-                'トップ', 'ホーム', 'HOME', 'TOP',
-                'Company', 'About', 'Overview', 'Profile'
-            ]
-            
-            candidates = []
-            
-            for separator in separators:
-                if separator not in title_text:
-                    continue
-                
-                parts = title_text.split(separator)
-                for part in parts:
-                    part = part.strip()
-                    
-                    if not part or len(part) < 3 or len(part) > 60:
-                        continue
-                    
-                    # Skip SEO stuffing (keywords, descriptions)
-                    seo_keywords = ['ご相談', 'サービス', 'news', 'blog', 'サイト']
-                    if any(kw in part for kw in seo_keywords):
-                        continue
-                    
-                    cleaned = self._clean(self._remove_seo(part))
-                    
-                    # Normalize encoding again after cleaning
-                    cleaned = self._normalize_encoding(cleaned)
-                    
-                    if self._is_valid(cleaned) and not self._is_garbage(cleaned):
-                        has_legal = any(e in cleaned for e in self.LEGAL_ENTITIES)
-                        
-                        # NEW: Check if this part has page descriptors appended
-                        has_descriptor = any(desc in cleaned for desc in page_descriptors)
-                        
-                        confidence = 0.88 if has_legal else 0.84
-                        
-                        candidates.append({
-                            'value': cleaned,
-                            'has_legal': has_legal,
-                            'has_descriptor': has_descriptor,
-                            'confidence': confidence
-                        })
-            
-            # NEW: Smart selection - prefer clean company names without descriptors
-            if candidates:
-                # If we have multiple candidates, prefer ones without descriptors
-                clean_candidates = [c for c in candidates if not c['has_descriptor'] and c['has_legal']]
-                
-                if clean_candidates:
-                    # Use the shortest clean candidate with legal entity
-                    best = min(clean_candidates, key=lambda x: len(x['value']))
-                else:
-                    # Fallback: try to strip descriptors from candidates
-                    for candidate in candidates:
-                        original = candidate['value']
-                        cleaned = original
-                        
-                        for descriptor in page_descriptors:
-                            # Remove descriptor from end
-                            if cleaned.endswith(descriptor):
-                                cleaned = cleaned[:-len(descriptor)].strip()
-                            # Remove descriptor from beginning (less common)
-                            if cleaned.startswith(descriptor):
-                                cleaned = cleaned[len(descriptor):].strip()
-                        
-                        # If we successfully stripped a descriptor, re-validate
-                        if cleaned != original and self._is_valid(cleaned):
-                            candidate['value'] = cleaned
-                            candidate['has_descriptor'] = False
-                            candidate['confidence'] = 0.90 if candidate['has_legal'] else 0.86
-                    
-                    # Now select best candidate (prefer those without descriptors)
-                    candidates.sort(key=lambda x: (
-                        x['has_descriptor'],  # False sorts before True
-                        -x['has_legal'],      # True (1) sorts before False (0)
-                        -x['confidence'],
-                        len(x['value'])       # Shorter is better
-                    ))
-                    
-                    best = candidates[0]
-                
-                results.append(CompanyNameCandidate(
-                    best['value'], 'title_tag', best['confidence'], 'title', best['has_legal']
-                ))
-                print(f"      ✓ [TITLE] {best['value']} (conf: {best['confidence']:.2f})")
-        
-        except Exception as e:
-            logger.debug(f"Title tag extraction error: {e}")
-        
-        return results
-
-    def _extract_semantic_label_value_pairs(self, html_content: str) -> List[CompanyNameCandidate]:
-        """
-        NEW: Extract from semantic HTML patterns where labels and values are in adjacent elements.
-        
-        Handles patterns like:
-        - <h2>団体名</h2><div>認定NPO法人 CLACK</div>
-        - <div class="label">会社名</div><div class="value">XXXX株式会社</div>
-        - <span class="label">事務所名:</span><span class="value">行政書士XXXX</span>
-        
-        CRITICAL: Be strict about what counts as a "value" - don't match section headers!
-        """
-        results = []
-        seen = set()
-        
-        nav_patterns = [
-            r'^▲.*?へ$',      # ▲Page Topへ, ▲トップへ
-            r'^→.*',          # →アクセス, →詳細
-            r'.*メニュー$',    # サイトメニュー
-            r'.*一覧$',        # カテゴリ一覧
-            r'^Page\s+Top',    # Page Top
-            r'^このページの.*',  # このページの先頭へ
-        ]
-
-        try:
-            soup = BeautifulSoup(html_content, 'html.parser')
-            
-            print(f"      Scanning semantic label-value pairs...")
-            
-            # STRATEGY: Find heading that matches company name label, then find proper value
-            # The key is to look for the NEXT content element that:
-            # 1. Is NOT another heading (h1-h6)
-            # 2. Contains text that looks like a company name (not a nav/menu item)
-            # 3. Is relatively close to the label (within 3 siblings, not buried)
-            
-            for heading in soup.find_all(['h2', 'h3']):  # Skip h1 as it's usually site title
-                label_text = heading.get_text(strip=True)
-                
-                # Check if label matches company name pattern
-                matches, conf_boost = self._label_matches_company_name(label_text)
-                if not matches:
-                    continue
-                
-                print(f"        Found label heading: '{label_text}'")
-                
-                # Search for value: go through next siblings, but SKIP headings
-                value = None
-                current = heading.next_sibling
-                siblings_checked = 0
-                
-                while current and siblings_checked < 10:
-                    if not hasattr(current, 'name'):
-                        current = current.next_sibling
-                        siblings_checked += 1
-                        continue
-                    
-                    # CRITICAL: Skip heading elements (they're section headers, not values)
-                    if current.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                        print(f"          Skipping heading: {current.name}")
-                        current = current.next_sibling
-                        siblings_checked += 1
-                        continue
-                    
-                    # Skip common navigation/structural elements
-                    if current.name in ['nav', 'script', 'style', 'noscript']:
-                        current = current.next_sibling
-                        siblings_checked += 1
-                        continue
-                    
-                    # Look for content in divs, spans, p, td, dd
-                    if current.name in ['div', 'span', 'p', 'td', 'dd']:
-                        text = current.get_text(strip=True)
-                        
-                        # CRITICAL: Reject if text is too long (likely a paragraph)
-                        # Company names are typically 5-50 chars
-                        if len(text) > 100:
-                            print(f"          Skipping long text ({len(text)} chars) - likely paragraph")
-                            current = current.next_sibling
-                            siblings_checked += 1
-                            continue
-
-                        # CRITICAL: Reject navigation patterns
-                        is_nav = any(re.match(pattern, text) for pattern in nav_patterns)
-                        if is_nav:
-                            print(f"          Skipping navigation: '{text}'")
-                            current = current.next_sibling
-                            siblings_checked += 1
-                            continue
-                        
-                        # Reject if text looks like navigation (contains menu-like words)
-                        nav_keywords = ['メニュー', 'ナビ', '目次', 'menu', 'nav', '一覧', 
-                                    'カテゴリ', 'category', 'tag', 'search']
-                        if any(kw in text.lower() for kw in nav_keywords):
-                            print(f"          Skipping nav-like text: '{text[:40]}'")
-                            current = current.next_sibling
-                            siblings_checked += 1
-                            continue
-                        
-                        # Accept if text is reasonable length (3-80 chars)
-                        if 3 <= len(text) <= 80:
-                            # Make sure it's not another label
-                            is_label, _ = self._label_matches_company_name(text)
-                            if not is_label:
-                                value = text
-                                print(f"          Found value: '{value}'")
-                                break
-                    
-                    current = current.next_sibling
-                    siblings_checked += 1
-                
-                if not value:
-                    print(f"          No value found - searching inside heading's parent...")
-                    
-                    # Fallback: check parent's children (in case structure is nested)
-                    parent = heading.parent
-                    if parent:
-                        # Get all direct child text nodes and elements
-                        next_index = None
-                        for i, child in enumerate(parent.children):
-                            if child == heading:
-                                next_index = i
-                                break
-                        
-                        if next_index is not None:
-                            # Look at next few children
-                            for i in range(next_index + 1, min(next_index + 5, len(list(parent.children)))):
-                                child = list(parent.children)[i]
-                                if not hasattr(child, 'name'):
-                                    continue
-                                
-                                if child.name in ['h1', 'h2', 'h3', 'h4', 'h5', 'h6']:
-                                    continue
-                                
-                                text = child.get_text(strip=True)
-                                if 3 <= len(text) <= 80:
-                                    is_label, _ = self._label_matches_company_name(text)
-                                    if not is_label:
-                                        nav_keywords = ['メニュー', 'ナビ', '目次', 'menu']
-                                        if not any(kw in text.lower() for kw in nav_keywords):
-                                            value = text
-                                            print(f"          Found value in parent: '{value}'")
-                                            break
-                
-                if not value:
-                    print(f"          No suitable value found")
-                    continue
-                
-                # Clean and validate value
-                if self._looks_like_date(value):
-                    print(f"          Value is a date, skipping")
-                    continue
-                
-                if not self._is_valid(value):
-                    print(f"          Value fails validation: '{value}'")
-                    continue
-                
-                cleaned = self._clean(self._remove_seo(value))
-                
-                # Extract from mixed text if needed
-                if any(e in cleaned for e in self.LEGAL_ENTITIES):
-                    extracted = self._extract_company_from_mixed_text(cleaned)
-                    if extracted:
-                        cleaned = extracted
-                
-                if cleaned and cleaned not in seen and not self._is_garbage(cleaned):
-                    seen.add(cleaned)
-                    has_legal = any(e in cleaned for e in self.LEGAL_ENTITIES)
-                    confidence = 0.96 if has_legal else 0.93 + (conf_boost * 0.04)
-                    
-                    results.append(CompanyNameCandidate(
-                        cleaned, 'semantic_label_value', confidence, 'semantic_pair', has_legal
-                    ))
-                    print(f"        ✓ [SEMANTIC PAIR] '{label_text}' → {cleaned} (conf: {confidence:.2f})")
-                    return results  # Return on first match
-            
-            if not results:
-                print(f"      No valid semantic label-value pairs found")
-        
-        except Exception as e:
-            logger.debug(f"Semantic label-value extraction error: {e}")
-        
-        return results
-
-    def _extract_table_with_encoding_fix(self, html_content: str) -> List['CompanyNameCandidate']:
-        """FIXED: Handle multi-line company names that are too long for validation."""
-        
-        results: List['CompanyNameCandidate'] = []
-        seen = set()
-
-        try:
-            soup = BeautifulSoup(html_content, 'html.parser')
-            tables = soup.find_all('table')
-
-            if not tables:
-                return results
-
-            print("      Extracting with encoding fixes...")
-
-            affiliate_keywords = ['関連会社', '子会社', 'パートナー']
-
-            for table_idx, table in enumerate(tables):
-                table_text = table.get_text()
-
-                if table_idx > 0 and any(kw in table_text for kw in affiliate_keywords):
-                    continue
-
-                for row in table.find_all('tr'):
-                    cells = row.find_all(['td', 'th'])
-                    if len(cells) < 2:
-                        continue
-
-                    label_raw = cells[0].get_text(strip=True)
-                    value_raw = cells[1].get_text(strip=True)
-
-                    label = self._normalize_encoding(label_raw)
-                    value = self._normalize_encoding(value_raw)
-
-                    if not label or not value:
-                        continue
-
-                    matches, conf_boost = self._label_matches_company_name(label)
-                    if not matches:
-                        continue
-
-                    if self._looks_like_date(value):
-                        continue
-                    
-                    # FIX: Explicitly reject navigation/menu concatenations
-                    nav_indicators = ['選び方', 'Q&A', '生産終了品', 'ガイド', 'メニュー']
-                    nav_count = sum(1 for indicator in nav_indicators if indicator in value)
-                    if nav_count >= 2:
-                        print(f"        ✗ [NAVIGATION TEXT] {value}")
-                        continue
-                    
-                    # Rest of validation continues...
-                    if len(value) > 100:
-                        continue
-                    
-                    if len(value) > 30:
-                        has_designation = any(d in value for d in [
-                            '行政書士', '弁護士', '税理士', '社会保険労務士',
-                            '医療法人', '公認会計士', '管理業務主任者', 'CPA'
-                        ])
-                        if not has_designation:
-                            if not self._is_valid(value):
-                                continue
-
-                    if not self._is_valid(value):
-                        continue
-
-                    cleaned = self._clean(self._remove_seo(value))
-
-                    # Remove excessive line breaks from multi-line names
-                    cleaned = re.sub(r'\s+', ' ', cleaned)
-                    
-                    # Normalize encoding
-                    cleaned = self._normalize_encoding(cleaned)
-
-                    if any(e in cleaned for e in self.LEGAL_ENTITIES):
-                        extracted = self._extract_company_from_mixed_text(cleaned)
-                        if extracted:
-                            cleaned = extracted
-
-                    if cleaned and cleaned not in seen and not self._is_garbage(cleaned):
-                        seen.add(cleaned)
-                        has_legal = any(e in cleaned for e in self.LEGAL_ENTITIES)
-                        confidence = 0.99 if has_legal else 0.95 + (conf_boost * 0.04)
-
-                        results.append(
-                            CompanyNameCandidate(
-                                cleaned,
-                                source='table_encoding_fix',
-                                confidence=confidence,
-                                method='table_field',
-                                has_legal_entity=has_legal
-                            )
-                        )
-                        print(f"        ✓ [TABLE ENCODING FIX] {cleaned}")
-
-        except Exception as e:
-            logger.debug(f"Table encoding fix error: {e}")
-
-        return results
 
     def _clean(self, text: str) -> str:
         """Clean and normalize text"""
@@ -956,22 +254,6 @@ class EnhancedCompanyNameExtractor:
         if self._is_form_field(name) or not name:
             return False
         
-        nav_patterns = [
-            r'Q&A',  # FAQ indicators
-            r'選び方.*Q&A',  # Selection guide + Q&A
-            r'生産終了品',  # Discontinued products
-            r'.*の選び方.*Q&A.*',  # Pattern with selection guide and Q&A
-        ]
-        
-        for pattern in nav_patterns:
-            if re.search(pattern, name):
-                return False
-
-        menu_keywords = ['選び方', 'Q&A', '生産終了', 'ガイド', '一覧', 'メニュー']
-        keyword_count = sum(1 for kw in menu_keywords if kw in name)
-        if keyword_count >= 2:  # Multiple menu keywords = navigation text
-            return False
-
         if any(npo_marker in name for npo_marker in ['特定非営利活動法人', '一般社団法人', '一般財団法人']):
             max_length = 80  # NPOs/associations can be longer
         else:
@@ -1103,38 +385,6 @@ class EnhancedCompanyNameExtractor:
             for idx, h1 in enumerate(h1_tags):
                 text = self._clean(h1.get_text(strip=True))
                 print(f"    h1[{idx}]: '{text[:80]}'...")
-                
-                # === ADD THIS ENTIRE BLOCK BEFORE LEGAL ENTITY CHECK ===
-                # STRATEGY 1: Check for pipe separator (page title | company name)
-                # Common pattern: "事務所概要｜有村探偵事務所" or "About Us | Company Name"
-                pipe_separators = ['｜', '|', ' | ', ' ｜ ']
-                for separator in pipe_separators:
-                    if separator in text:
-                        parts = text.split(separator)
-                        print(f"      → Found pipe separator, parts: {parts}")
-                        
-                        # Check each part to see which one is the company name
-                        for part in parts:
-                            part = part.strip()
-                            
-                            # Skip obvious page titles
-                            page_title_keywords = ['概要', '案内', 'について', 'とは', 'overview', 'about', 'info']
-                            if any(kw in part.lower() for kw in page_title_keywords):
-                                continue
-                            
-                            # Prefer parts with legal entities or professional designations
-                            has_legal = any(e in part for e in self.LEGAL_ENTITIES)
-                            has_professional = any(d in part for d in ['行政書士', '弁護士', '司法書士', '税理士'])
-                            has_business_type = any(b in part for b in ['探偵事務所', '調査事務所', 'オフィス', '事務所'])
-                            
-                            if has_legal or has_professional or has_business_type:
-                                if self._is_valid(part) and not self._is_garbage(part):
-                                    confidence = 0.94 if has_legal else 0.91
-                                    results.append(CompanyNameCandidate(
-                                        part, 'h1_pipe_split', confidence, 'h1_smart_split', has_legal
-                                    ))
-                                    print(f"      ✓ [H1 PIPE SPLIT] '{part}' (conf: {confidence:.2f})")
-                                    return results
                 
                 # Check if text starts with a legal entity
                 for entity in self.LEGAL_ENTITIES:
@@ -1479,22 +729,17 @@ class EnhancedCompanyNameExtractor:
                     
                     if isinstance(data, dict) and 'organization' in data.get('@type', '').lower():
                         name = data.get('name', '').strip()
-                        # FIX: Remove trailing special characters like ‣, ›, •, etc.
-                        name = re.sub(r'[\u2023\u203a\u2022\u25b8\u25b9\u25ba\s]+$', '', name).strip()
-                        
                         if name and self._is_valid(name):
                             return CompanyNameCandidate(name, 'json_ld', 0.96, 'json_ld', 
                                                     any(e in name for e in self.LEGAL_ENTITIES))
                 except (json.JSONDecodeError, TypeError):
                     pass
             
-            for attr, conf in [('og:site_name', 0.95), ('og:title', 0.90)]:
+            for attr, conf in [('og:site_name', 0.90), ('og:title', 0.88)]:
                 tag = soup.find('meta', property=attr) or soup.find('meta', attrs={'name': attr})
                 if tag:
                     for part in re.split(r'[|｜/\-]', tag.get('content', '')):
                         part = part.strip()
-                        # FIX: Remove trailing special characters
-                        part = re.sub(r'[\u2023\u203a\u2022\u25b8\u25b9\u25ba\s]+$', '', part).strip()
                         
                         if any(seo in part for seo in ['ご相談', 'お問い合わせ', 'ください', '選び']):
                             continue
@@ -1510,7 +755,7 @@ class EnhancedCompanyNameExtractor:
             logger.debug(f"Structured data error: {e}")
         
         return None
-    
+
     def _extract_black_square_markers(self, html_content: str) -> List[CompanyNameCandidate]:
         """NEW: Extract company names from ■ (BLACK SQUARE) marker format
         
@@ -1873,11 +1118,8 @@ class EnhancedCompanyNameExtractor:
             # === TABLE EXTRACTION ===
             tables = soup.find_all('table')
             if tables:
-                encoding_results = self._extract_table_with_encoding_fix(html_content)
-                if encoding_results:
-                    return encoding_results
+                print(f"      Found {len(tables)} table(s)")
             
-
             for table_idx, table in enumerate(tables):
                 table_context = table.get_text()
                 affiliate_keywords = ['関連会社', '子会社', 'パートナー', 'グループ会社']
@@ -1966,9 +1208,6 @@ class EnhancedCompanyNameExtractor:
             dls = soup.find_all('dl')
             if dls:
                 print(f"      Found {len(dls)} definition list(s)")
-                safe_results = self._extract_malformed_dl_safe(html_content)
-                if safe_results:
-                    return safe_results
                 
                 for dl in dls:
                     # === TRY STANDARD DL EXTRACTION FIRST ===
@@ -2027,12 +1266,11 @@ class EnhancedCompanyNameExtractor:
                         
                         print(f"        Found {len(dts_raw)} <dt> and {len(dds_raw)} <dd> elements")
                         
-                        # === REPLACE THE BROKEN WHILE LOOP WITH THIS ===
-                        # Match DTs with DDs by position
-                        for i in range(min(len(dts_raw), len(dds_raw))):
-                            # Clean HTML tags from raw text
-                            label_raw = re.sub(r'<[^>]+>', '', dts_raw[i])
-                            value_raw = re.sub(r'<[^>]+>', '', dds_raw[i])
+                        i = 0
+                        while i < len(all_children):
+                            if all_children[i].name == 'dt' and i + 1 < len(all_children) and all_children[i + 1].name == 'dd':
+                                label_raw = all_children[i].get_text(strip=True)
+                                value_raw = all_children[i + 1].get_text(strip=True)
                             
                             label = self._normalize_encoding(label_raw)
                             value = self._normalize_encoding(value_raw)
@@ -2137,8 +1375,7 @@ class EnhancedCompanyNameExtractor:
         
         best = sorted(list(seen.values()), 
                  key=lambda x: (
-                     -3 if x.method in ['dl_field', 'table_field', 'black_square'] else 0,
-                     -2 if x.method == 'title' and x.confidence >= 0.88 else 0,  # Prioritize high-conf titles
+                     -2 if x.method in ['dl_field', 'table_field', 'black_square'] else 0,
                      -1 if x.method == 'business_name' else 0,
                      -x.has_legal_entity,
                      -x.confidence,
