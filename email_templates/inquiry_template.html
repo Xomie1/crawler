@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body {
+            font-family: 'メイリオ', 'Meiryo', sans-serif;
+            line-height: 1.6;
+            color: #333;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .header {
+            background: linear-gradient(135deg, #0066cc 0%, #0052a3 100%);
+            color: white;
+            padding: 30px 20px;
+            text-align: center;
+            border-radius: 8px 8px 0 0;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        .content {
+            padding: 30px;
+            background: #ffffff;
+            border-radius: 0 0 8px 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .content p {
+            margin: 15px 0;
+            line-height: 1.8;
+        }
+        .signature {
+            margin-top: 25px;
+            padding-top: 20px;
+            border-top: 1px solid #e0e0e0;
+            font-weight: bold;
+        }
+        .footer {
+            padding: 20px;
+            text-align: center;
+            color: #666;
+            font-size: 12px;
+            margin-top: 20px;
+        }
+        a {
+            color: #0066cc;
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>{{sender_name}}</h1>
+        </div>
+        
+        <div class="content">
+            <p>{{company_name}}様</p>
+            
+            <p>お世話になっております。<br>
+            {{sender_name}}と申します。</p>
+            
+            <p>{{message_body}}</p>
+            
+            <p>ご不明な点がございましたら、お気軽にお問い合わせください。</p>
+            
+            <p>よろしくお願いいたします。</p>
+            
+            <div class="signature">
+                <p>{{sender_name}}<br>
+                <a href="mailto:{{sender_email}}">{{sender_email}}</a></p>
+            </div>
+        </div>
+        
+        <div class="footer">
+            このメールは {{company_name}} 宛に送信されました。<br>
+            今後このようなメールを受信したくない場合は、<a href="#">こちら</a>から配信停止できます。
+        </div>
+    </div>
+</body>
+</html>

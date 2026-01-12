@@ -282,9 +282,9 @@ class AjaxFormHandler:
             logger.info(f"AJAX submission to: {endpoint}")
             
             if method.upper() == 'POST':
-                response = self.session.post(endpoint, data=form_data, headers=headers, timeout=30)
+                response = self.session.post(endpoint, data=form_data, headers=headers, timeout=45)
             else:
-                response = self.session.get(endpoint, params=form_data, headers=headers, timeout=30)
+                response = self.session.get(endpoint, params=form_data, headers=headers, timeout=45)
             
             logger.info(f"AJAX response: {response.status_code}")
             return response, None
@@ -524,8 +524,8 @@ class FormSubmitter:
     """
     
     # Priority 1: Retry configuration
-    MAX_RETRIES = 2
-    RETRY_DELAY_BASE = 3.0
+    MAX_RETRIES = 3
+    RETRY_DELAY_BASE = 5.0
     RETRY_BACKOFF_MULTIPLIER = 2.0
     RETRYABLE_ERRORS = (
         requests.exceptions.Timeout,
