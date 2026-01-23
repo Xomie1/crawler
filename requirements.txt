@@ -29,9 +29,16 @@ playwright
 dnspython
 chardet
 
-# AI Extraction Dependencies
-# Add these to your existing requirements.txt
 
 # OpenAI SDK (works for both OpenAI and Groq)
 openai
 
+sendgrid
+# Queue System Dependencies
+redis
+rq
+rq-dashboard
+rq-scheduler
+
+# For better concurrency (optional but recommended)
+gevent
