@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 from datetime import datetime
 
-from task_queue.queues import crawl_queue, get_queue_stats, clear_all_queues
+from task_queue.queues import crawl_queue, pdf_queue, get_queue_stats, clear_all_queues
 from task_queue.config import CRAWL_RETRY
 from batch.batch_crawler import load_urls_from_excel
 
@@ -72,6 +72,149 @@ def load_urls_from_jsonl(input_file, limit=None):
         raise
     
     return urls, company_names
+
+
+def queue_urls(input_file, limit=None):
+    """
+    Load URLs from Excel, CSV, or JSONL file.
+    
+    Args:
+        input_file: Path to input file (.xlsx, .csv, or .jsonl)
+        limit: Limit number of URLs (optional)
+        
+    Returns:
+        tuple: (urls list, company_names list)
+    """
+    file_path = Path(input_file)
+    
+    if file_path.suffix.lower() == '.jsonl':
+        return load_urls_from_jsonl(input_file, limit=limit)
+    else:
+        # Use existing Excel/CSV loader
+        return load_urls_from_excel(input_file, limit=limit)
+
+
+def queue_pdf_jobs_from_jsonl(
+    input_file,
+    limit=None,
+    filter_status=None,
+    dry_run=False
+):
+    """
+    Queue PDF generation jobs from submission JSONL file.
+    
+    Args:
+        input_file: Path to submission_log.jsonl
+        limit: Limit number of jobs (optional)
+        filter_status: Filter by status (e.g., 'success')
+        dry_run: Don't actually queue
+        
+    Returns:
+        dict: Summary of queued jobs
+    """
+    
+    file_path = Path(input_file)
+    
+    if not file_path.exists():
+        logger.error(f"❌ File not found: {input_file}")
+        return {'error': f'File not found: {input_file}'}
+    
+    stats = {'total': 0, 'queued': 0, 'failed': 0, 'skipped': 0}
+    
+    logger.info(f"📖 Reading submissions from: {input_file}")
+    
+    start_time = time.time()
+    
+    with open(file_path, 'r', encoding='utf-8') as f:
+        for line_num, line in enumerate(f, 1):
+            if limit and stats['total'] >= limit:
+                break
+            
+            try:
+                data = json.loads(line)
+                stats['total'] += 1
+                
+                # Apply status filter
+                if filter_status and data.get('status') != filter_status:
+                    stats['skipped'] += 1
+                    continue
+                
+                # Skip if already processed
+                if data.get('pdf_generated'):
+                    stats['skipped'] += 1
+                    continue
+                
+                # Check if has required fields (support both formats)
+                # Format 1: parties array
+                if data.get('parties') and isinstance(data.get('parties'), list) and len(data.get('parties')) >= 2:
+                    parties = data['parties']
+                # Format 2: flat fields (party1_name, party2_name, etc.)
+                elif data.get('party1_name') and data.get('party2_name'):
+                    parties = [
+                        {
+                            'name': data['party1_name'],
+                            'address': data.get('party1_address', ''),
+                            'role': data.get('party1_role', 'party1')
+                        },
+                        {
+                            'name': data['party2_name'],
+                            'address': data.get('party2_address', ''),
+                            'role': data.get('party2_role', 'party2')
+                        }
+                    ]
+                else:
+                    logger.debug(f"Line {line_num}: Missing required party fields, skipping")
+                    stats['skipped'] += 1
+                    continue
+                
+                if dry_run:
+                    logger.info(f"Line {line_num}: [DRY RUN] Would queue PDF for {data.get('document_type')}")
+                    stats['queued'] += 1
+                    continue
+                
+                # Transform to document input format
+                document_input = {
+                    'document_type': data.get('document_type', 'prenuptial'),
+                    'parties': parties,
+                    'options': {
+                        'property_separation': data.get('property_separation', False),
+                        'alimony': data.get('alimony', False),
+                        'children': data.get('children', False)
+                    },
+                    'custom_values': data.get('custom_values', {}),
+                    'include_signatures': data.get('include_signatures', True),
+                    'include_witnesses': data.get('include_witnesses', False),
+                }
+                
+                # Enqueue job
+                job = pdf_queue.enqueue(
+                    'workers.pdf_worker.generate_pdf_job',
+                    document_input,
+                    job_timeout='10m'
+                )
+                
+                stats['queued'] += 1
+                
+                if stats['queued'] % 100 == 0 or stats['queued'] == 1:
+                    logger.info(f"  Queued {stats['queued']} PDF jobs...")
+            
+            except json.JSONDecodeError as e:
+                logger.error(f"Line {line_num}: Invalid JSON - {e}")
+                stats['failed'] += 1
+            except Exception as e:
+                logger.error(f"Line {line_num}: Failed to queue - {e}")
+                stats['failed'] += 1
+    
+    elapsed = time.time() - start_time
+    
+    return {
+        'total': stats['total'],
+        'queued': stats['queued'],
+        'skipped': stats['skipped'],
+        'failed': stats['failed'],
+        'elapsed': elapsed,
+        'dry_run': dry_run
+    }
 
 
 def load_urls(input_file, limit=None):
@@ -225,22 +368,31 @@ def main():
         epilog="""
 Examples:
   # Queue all URLs for full processing (crawl → email → form)
-  python -m batch.queue_scheduler.py input.xlsx
+  python -m batch.queue_scheduler input.xlsx
   
   # Queue from JSONL file
-  python -m batch.queue_scheduler.py urls.jsonl
+  python -m batch.queue_scheduler urls.jsonl
   
   # Dry run (don't actually queue)
-  python -m batch.queue_scheduler.py input.xlsx --dry-run
+  python -m batch.queue_scheduler input.xlsx --dry-run
   
   # Queue only first 100 URLs
-  python -m batch.queue_scheduler.py input.xlsx --limit 100
+  python -m batch.queue_scheduler input.xlsx --limit 100
   
   # Queue without AI extraction
-  python -m batch.queue_scheduler.py input.xlsx --no-ai
+  python -m batch.queue_scheduler input.xlsx --no-ai
 
+  # Queue PDF generation jobs from submission JSONL
+  python -m batch.queue_scheduler --queue-pdf submission_log.jsonl
+  
+  # Queue only successful submissions for PDF generation
+  python -m batch.queue_scheduler --queue-pdf submission_log.jsonl --pdf-status success
+  
   # Clear all queues (reset)
-  python -m batch.queue_scheduler.py --clear-queues
+  python -m batch.queue_scheduler --clear-queues
+  
+  # Show queue statistics
+  python -m batch.queue_scheduler --stats
   
 Supported file formats:
   - .xlsx (Excel)
@@ -305,6 +457,18 @@ Supported file formats:
         help='Show queue statistics and exit'
     )
     
+    parser.add_argument(
+        '--queue-pdf',
+        metavar='JSONL_FILE',
+        help='Queue PDF generation jobs from submission JSONL file'
+    )
+    
+    parser.add_argument(
+        '--pdf-status',
+        default=None,
+        help='Filter submissions by status when queuing PDFs (e.g., "success")'
+    )
+    
     args = parser.parse_args()
     
     # Handle special commands
@@ -320,6 +484,44 @@ Supported file formats:
             print(f"\n{queue_name}:")
             for key, value in queue_stats.items():
                 print(f"  {key}: {value}")
+        return 0
+    
+    if args.queue_pdf:
+        print("=" * 70)
+        print("PDF QUEUE SCHEDULER")
+        print("=" * 70)
+        result = queue_pdf_jobs_from_jsonl(
+            input_file=args.queue_pdf,
+            limit=args.limit,
+            filter_status=args.pdf_status,
+            dry_run=args.dry_run
+        )
+        
+        if 'error' in result:
+            logger.error(result['error'])
+            return 1
+        
+        print("\n" + "=" * 70)
+        print("PDF QUEUEING COMPLETE")
+        print("=" * 70)
+        print(f"Total read:     {result['total']}")
+        print(f"Queued:         {result['queued']} ✅")
+        print(f"Skipped:        {result['skipped']}")
+        print(f"Failed:         {result['failed']} ❌")
+        print(f"Time:           {result['elapsed']:.1f}s")
+        print(f"Dry run:        {result['dry_run']}")
+        print("=" * 70)
+        
+        # Show queue stats
+        print("\nQueue Status:")
+        stats = get_queue_stats()
+        for queue_name, queue_stats in stats.items():
+            print(f"  {queue_name}: {queue_stats['count']} jobs")
+        
+        print("\nNext Steps:")
+        print("  1. Start workers: rq worker pdf_queue (or add to multi-worker command)")
+        print("  2. Monitor: rq-dashboard (visit http://localhost:9181)")
+        
         return 0
     
     # Validate input file

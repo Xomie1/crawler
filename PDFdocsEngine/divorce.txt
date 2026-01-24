@@ -1,0 +1,99 @@
+ 離婚公正証書
+第一章 離婚
+ 頭書 
+{{party_a_name}}（以下「甲」という。）と{{party_b_name}}（以下「乙」という。）は、本日、協議離婚することに合意し、その条件として、以下のとおり定める。
+ 第〇条（協議離婚の合意） 
+甲及び乙は、本日、協議離婚することを合意する。
+{{#if has_children == “true”}}
+ 第〇条（親権者の指定） 
+甲及び乙は、当事者間の未成年の子である{{child_name}}（生年月日：{{child_birth_date}}）の親権者を{{custodian}}と定める。
+{{/if}}
+ 第〇条（離婚届の提出）
+ 甲及び乙は、{{filing_person}}が、本協議書に基づき、速やかに離婚届を役所に提出することを合意する。
+{{#if include_reason == “true”}}
+ 第〇条（離婚原因の明記）
+ 甲及び乙は、本件離婚が{{divorce_reason}}を原因として成立したことを確認する。
+{{/if}}
+ 第〇条（戸籍に関する合意）
+乙は、本件離婚に際し、婚姻前の氏に戻り、{{family_register}}に入籍する。
+
+ 第二章 面会交流
+ 第〇条（面会交流の原則） 
+ 1. 親権者でない方（{{visitation_party_choice}}）と子{{child_name}}との面会交流及び連絡の方法、回数、時間、場所等は、子の福祉を最優先して、甲及び乙が誠意をもって協議して定める。
+{{child_welfare_priority_statement}}
+ 2. 面会交流を円滑に実施するため、当事者は子の養育に関する情報交換に協力するものとする。
+ {{information_exchange_confirmation}}
+3. 面会交流は、原則として{{visitation_frequency}}とし、毎月{{visitation_schedule}}の{{visitation_time}}に実施する。
+4. 面会交流は、{{direct_meeting}}を基本とするが、必要に応じて{{alternative_contact_methods}}を併用できるものとする。
+5. 面会交流の際の子の引渡し及び受取りは、{{visitation_location}}で行うものとし、交通費は面会交流をする側（{{visitation_party_choice}}）の負担とする。
+6. 面会交流においては、宿泊を{{allow_overnight}}ものとする。宿泊を認める場合は、{{overnight_conditions}}を別途協議して定める。
+{{#if include_visitation_change == “true”}}
+7. 子の病気や学校行事などやむを得ない事情がある場合は、事前に連絡し、面会交流の日時を変更できるものとする。
+{{/if}}
+ 第三章 財産分与
+ 第〇条（財産分与の合意） 
+ 甲及び乙は、本日、甲乙間の婚姻中に築いた共同財産について、以下のとおり財産分与の合意が成立したことを確認する。
+ 第〇条（清算金の支払い）
+{{property_division_party_choice}}は、財産分与の清算金として、{{!property_division_party_choice}}に対し、金{{金額}}円の支払義務があることを認め、これを{{property_division_deadline}}限り、{{!property_division_party_choice}}の指定する下記口座に一括で振り込む方法により支払う。振込手数料は、{{property_division_party_choice}}の負担とする。
+ 第〇条（清算条項） 
+ 甲及び乙は、本協議書に定めるもののほか、財産分与に関し、相互間に何らの債権債務がないことを確認する。
+ 第〇条（不動産の分与） 
+ 甲及び乙は、以下の不動産を{{property_division_party_choice}}の単独所有と定め、{{!property_division_party_choice}}は{{property_division_party_choice}}に対し、この不動産に関する財産分与請求権を放棄する。
+（１）土地：{{property_location_land}}
+（２）建物：{{property_location_building}}
+ 上記不動産に設定された残債務（ローン残高：約{{property_loan_balance}}円）については、{{property_division_party_choice}}が単独で返済義務を負うものとし、{{!property_division_party_choice}}は、ローン解除の手続きに協力するものとする。
+ 第〇条（退職金の分与） 
+ 甲（または乙）が将来受領する退職金について、甲及び乙は、そのうち{{retirement_benefit_ratio}}に相当する額を財産分与の対象と定める。具体的な分与割合、金額、支払時期は、退職金支給時に改めて協議して定める。
+ 第〇条（預貯金等の分与）
+{{property_division_party_choice}}名義の{{insurance_company}}の生命保険（解約返戻金{{insurance_surrender_value}}円）は、{{!property_division_party_choice}}に分与されるものとし、{{property_division_party_choice}}は速やかに{{!property_division_party_choice}}へ名義変更手続きを行う。
+
+ 第四章 養育費
+ 第〇条（養育費の支払い義務） 
+{{child_support_party_choice}}は、未成年の子{{child_name}}（以下「丙」という。）の養育費として、{{!child_support_party_choice}}に対し、月額{{child_support_amount}}円を支払う義務があることを認める。
+ 第〇条（支払始期・終期） 
+ 支払始期は、{{child_support_start_date}}とし、終期は、{{child_support_end_condition}}の属する月までとする。
+ 第〇条（支払方法） 
+この養育費は、毎月{{child_support_payment_day}}日限り、{{!child_support_party_choice}}の指定する下記記載の預金口座に振り込む方法により支払う。振込手数料は、{{child_support_party_choice}}の負担とする。
+ 第〇条（特別費用の負担） 
+ 1. 丙の進学、留学、疾病など、通常の養育費の範囲を超えた特別の費用が必要となった場合、甲及び乙は、その都度、双方の収入状況等を考慮し、{{special_expense_ratio}}で分担するものとする。
+ 2. 丙が高校卒業後に大学等の高等教育機関へ進学する場合、その入学金及び在学中の学費については、{{child_support_party_choice}}が{{education_expense_ratio}}を負担するものとする。
+ 第〇条（再協議） 
+ 甲及び乙は、{{renegotiation_condition}}が生じた場合、養育費の金額及び支払終期について、誠意をもって再協議するものとする。
+{{#if include_leave_renegotiation == “true”}} 
+第〇条（休学・留学時の特則）
+{{/if}}
+ 丙が大学等に在籍中に休学又は留学し、前項記載の卒業月に卒業しない場合には、養育費の支払終期について、改めて協議することを約束する。 
+
+ 第五章 婚姻費用
+第〇条（婚姻費用清算の完了） 
+ 1. 甲及び乙は、本協議書に定めるもののほか、別居期間中の婚姻費用について、未払分を含め、相互間に何らの債権債務がないことを確認する。
+ 2. {{marriage_expense_party_choice}}は、{{marriage_expense_period}}までの婚姻費用分担金のうち、未払分として金{{marriage_expense_amount}}円の支払義務があることを認め、これを{{marriage_expense_amount}}限り、{{!marriage_expense_party_choice}}の指定する下記預金口座に一括で振り込む方法により支払う。
+ 第〇条（子の特別費用の清算） 
+ 1. 甲及び乙は、別居期間中に発生した子{{child_name}}の{{special_expense_type}}について、{{marriage_expense_party_choice}}が{{!marriage_expense_party_choice}}に対し、分担金として金{{special_expense_amount}}円を支払うことを合意する。
+ 2. 前項の分担金は、{{special_expense_period}}限り、一括で支払う。
+ 3. 丁（連帯保証人）は、{{marriage_expense_party_choice}}が{{!marriage_expense_party_choice}}に対して有する第2項記載の婚姻費用分担金の支払債務について、{{marriage_expense_party_choice}}と連帯して保証する。
+
+ 第六章 慰謝料
+ 第〇条（慰謝料の支払い義務） 
+ {{compensation_party_choice}}は、{{divorce_reason}}による精神的苦痛の慰謝料として、{{!compensation_party_choice}}に対し、金{{compensation_amount}}円の支払義務があることを認め、これを支払う。
+ 第〇条（支払方法） 
+ この慰謝料は、{{compensation_deadline}}限り、{{!compensation_party_choice}}の指定する下記記載の預金口座に一括で振り込む方法により支払う。振込手数料は、{{compensation_party_choice}}の負担とする。 
+これを、{{compensation_first_payment_date}}を第1回として、{{compensation_installments}}に分割し、毎月{{compensation_payment_day}}日限り、{{compensation_monthly_amount}}円を支払う。
+ 第〇条（連帯保証） 
+ 丁（連帯保証人）は、{{!compensation_party_choice}}に対し、{{compensation_party_choice}}の前条記載の慰謝料支払債務について、{{compensation_party_choice}}と連帯して保証する。
+ 第〇条（接触禁止） 
+{{contact_prohibition_party_choice}}は、正当な理由なく、{{!contact_prohibition_party_choice}}に対し、電話、メール、SNS等の方法を問わず連絡、接触しないことを約束する。
+ 第〇条（接触禁止違反の違約金） 
+{{contact_prohibition_party_choice}}が前項の接触禁止に違反した場合、{{!contact_prohibition_party_choice}}に対し、違約罰として金{{金額}}円を支払うものとする。
+{{#if waive_subrogation == “true”}}
+ 第〇条（求償権の放棄） 
+ 甲及び乙は、本協議書に基づき支払いを受けた金銭に関し、他の当事者に対し一切の求償権を行使しないことを確認する。
+{{/if}}
+最終共通条項
+ 最終清算条項 
+甲及び乙は、本協議書に定める事項のほか、相互間に何らの債権債務のないことを確認し、今後、財産分与、慰謝料、婚姻費用、その他名目のいかんを問わず、金銭その他一切の請求をしないことを約する。
+ 強制執行認諾文言 
+甲及び乙は、本契約に基づき負担する一切の金銭債務（養育費、財産分与の清算金、慰謝料、婚姻費用の未払分その他本協議書に定める金銭支払義務）について、{{contact_prohibition_party_choice}}がその履行を怠ったときは、直ちに強制執行に服する旨を認諾する。
+ 署名欄 
+ 本協議の成立を証するため、本書を作成し、甲乙署名捺印の上、各自１通を保有する。 
+

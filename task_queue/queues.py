@@ -60,11 +60,19 @@ captcha_queue = Queue(
     result_ttl=RESULT_TTL * 7  # Keep for a month
 )
 
+# PDF Generation Queue - For document generation
+pdf_queue = Queue(
+    'pdf_queue',
+    connection=redis_conn,
+    default_timeout='10m',
+    result_ttl=RESULT_TTL
+)
+
 # ==================== HELPER FUNCTIONS ====================
 
 def get_all_queues():
     """Get list of all queues"""
-    return [crawl_queue, email_queue, form_queue, failed_queue, captcha_queue]
+    return [crawl_queue, email_queue, form_queue, failed_queue, captcha_queue, pdf_queue]
 
 
 def get_queue_stats():

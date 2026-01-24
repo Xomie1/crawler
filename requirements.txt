@@ -42,3 +42,14 @@ rq-scheduler
 
 # For better concurrency (optional but recommended)
 gevent
+
+python-docx
+docx2pdf
+pydantic
+python-dateutil
+google-api-python-client
+google-auth
+python-dotenv
+pytz
+weasyprint
+pillow
