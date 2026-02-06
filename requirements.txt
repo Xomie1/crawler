@@ -48,24 +48,17 @@ docx2pdf
 pydantic
 python-dateutil
 google-api-python-client
-
-# FastAPI and Web Framework (Phase 5)
-fastapi
-uvicorn[standard]
-sqlalchemy
-python-multipart
 google-auth
 python-dotenv
 pytz
 weasyprint
 pillow
 
-
-pydantic
-python-dotenv
-axios
-redis
-rq
-requests
+# API layer
+fastapi
+uvicorn
 python-multipart
-aiofiles
+
+fastapi 
+uvicorn 
+jinja2

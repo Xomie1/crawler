@@ -110,6 +110,19 @@ def submit_form_job(form_url, company_name, source_url=None, crawl_job_id=None,
     except Exception as e:
         logger.error(f"[{job_id}] ❌ Form job failed: {e}")
         
+        # Log error to database
+        try:
+            db = FormSubmissionDB()
+            db.log_error(
+                phase='phase3',
+                error_type='FORM_SUBMISSION_ERROR',
+                error_message=str(e),
+                context=f"form_url={form_url}, company={company_name}"
+            )
+            db.close()
+        except Exception as log_err:
+            logger.error(f"[{job_id}] Failed to log error: {log_err}")
+        
         return {
             'submission_status': 'error',
             'error': str(e),

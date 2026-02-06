@@ -130,6 +130,19 @@ def send_email_job(email, company_name, source_url=None, crawl_job_id=None,
     except Exception as e:
         logger.error(f"[{job_id}] ❌ Email job failed: {e}")
         
+        # Log error to database
+        try:
+            db = FormSubmissionDB()
+            db.log_error(
+                phase='phase2',
+                error_type='EMAIL_SEND_ERROR',
+                error_message=str(e),
+                context=f"email={email}, company={company_name}"
+            )
+            db.close()
+        except Exception as log_err:
+            logger.error(f"[{job_id}] Failed to log error: {log_err}")
+        
         return {
             'success': False,
             'error': str(e),
