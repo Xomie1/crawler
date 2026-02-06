@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """
 Page fetcher utility
 Handles HTTP requests with retry logic, redirect following, and timeout handling.

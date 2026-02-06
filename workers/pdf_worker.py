@@ -14,7 +14,7 @@ from PDFdocsEngine.models import DocumentInput
 logger = logging.getLogger(__name__)
 
 
-def generate_pdf_job(document_input_dict, output_dir="generated_docs"):
+def generate_pdf_job(document_input_dict, output_dir="generated_docs", job_id=None):
     """
     Generate PDF/Word document from form submission data.
     
@@ -28,12 +28,34 @@ def generate_pdf_job(document_input_dict, output_dir="generated_docs"):
             - include_witnesses: bool (optional, default False)
             - filename: str (optional)
         output_dir: Directory to save generated documents
+        job_id: Optional job ID (if not provided, gets from RQ job)
             
     Returns:
         dict: paths to generated files or error info
     """
-    job = get_current_job()
-    job_id = job.id if job else 'local'
+    rq_job = get_current_job()
+    if not job_id:
+        job_id = rq_job.id if rq_job else 'local'
+    
+    # Get database session to update progress
+    db = None
+    db_request = None
+    try:
+        from phase5.database import SessionLocal, DocumentGenerationRequest as DBDocumentGenerationRequest
+        db = SessionLocal()
+        db_request = db.query(DBDocumentGenerationRequest).filter(
+            DBDocumentGenerationRequest.job_id == job_id
+        ).first()
+        
+        if db_request:
+            # Update status to processing
+            db_request.status = "processing"
+            db_request.started_at = datetime.utcnow()
+            db.commit()
+            logger.info(f"[{job_id}] Updated database: status=processing")
+    except Exception as db_err:
+        logger.warning(f"[{job_id}] Could not update database: {db_err}")
+        db = None
     
     try:
         logger.info(f"[{job_id}] Starting PDF generation for document type: {document_input_dict.get('document_type')}")
@@ -53,6 +75,29 @@ def generate_pdf_job(document_input_dict, output_dir="generated_docs"):
             f"  DOCX: {result['docx_path']}"
         )
         
+        # Update database with completion
+        if db and db_request:
+            db_request.status = "completed"
+            db_request.completed_at = datetime.utcnow()
+            db_request.pdf_path = result['pdf_path']
+            db_request.docx_path = result.get('docx_path')
+            
+            # Calculate file sizes
+            try:
+                if os.path.exists(result['pdf_path']):
+                    db_request.pdf_bytes = os.path.getsize(result['pdf_path'])
+                if result.get('docx_path') and os.path.exists(result['docx_path']):
+                    db_request.docx_bytes = os.path.getsize(result['docx_path'])
+            except Exception:
+                pass
+            
+            if db_request.started_at:
+                db_request.processing_time_seconds = int(
+                    (db_request.completed_at - db_request.started_at).total_seconds()
+                )
+            db.commit()
+            logger.info(f"[{job_id}] Updated database: status=completed")
+        
         return {
             "status": "success",
             "pdf_path": result['pdf_path'],
@@ -63,6 +108,15 @@ def generate_pdf_job(document_input_dict, output_dir="generated_docs"):
         
     except ValueError as e:
         logger.error(f"[{job_id}] ❌ Validation error: {str(e)}")
+        
+        # Update database with error
+        if db and db_request:
+            db_request.status = "failed"
+            db_request.error_type = "validation_error"
+            db_request.error_message = str(e)
+            db_request.completed_at = datetime.utcnow()
+            db.commit()
+        
         return {
             "status": "error",
             "error_type": "validation_error",
@@ -72,9 +126,21 @@ def generate_pdf_job(document_input_dict, output_dir="generated_docs"):
     
     except Exception as e:
         logger.error(f"[{job_id}] ❌ PDF generation failed: {str(e)}", exc_info=True)
+        
+        # Update database with error
+        if db and db_request:
+            db_request.status = "failed"
+            db_request.error_type = "generation_error"
+            db_request.error_message = str(e)
+            db_request.completed_at = datetime.utcnow()
+            db.commit()
+        
         return {
             "status": "error",
             "error_type": "generation_error",
             "error_message": str(e),
             "timestamp": datetime.now().isoformat()
         }
+    finally:
+        if db:
+            db.close()
